@@ -1,0 +1,125 @@
+package com.cyrus.gallery.data.repository
+
+import com.cyrus.gallery.data.cache.PrivateStorageManager
+import com.cyrus.gallery.data.database.CloudMediaCacheDao
+import com.cyrus.gallery.domain.model.CloudCachePolicy
+import com.cyrus.gallery.domain.model.CloudStorageState
+import com.cyrus.gallery.domain.model.MediaType
+import com.cyrus.gallery.domain.repository.CacheClearResult
+import com.cyrus.gallery.domain.repository.CloudCacheRepository
+import com.cyrus.gallery.domain.repository.CloudCacheStorageSummary
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
+import java.io.File
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class CloudCacheRepositoryImpl @Inject constructor(
+    private val storageManager: PrivateStorageManager,
+    private val cacheDao: CloudMediaCacheDao,
+) : CloudCacheRepository {
+
+    override fun observeStorageSummary(): Flow<CloudCacheStorageSummary> {
+        return cacheDao.observeAll().map { items ->
+            calculateSummary(items)
+        }
+    }
+
+    private fun calculateSummary(items: List<com.cyrus.gallery.data.database.CloudMediaCacheEntity>): CloudCacheStorageSummary {
+        val cachedPhotos = storageManager.calculateDirectoryBytes(storageManager.cachePhotosDir)
+        val cachedVideos = storageManager.calculateDirectoryBytes(storageManager.cacheVideosDir)
+        val thumbs = storageManager.calculateDirectoryBytes(storageManager.cacheThumbnailsDir)
+        val pinnedPhotos = storageManager.calculateDirectoryBytes(storageManager.offlinePhotosDir)
+        val pinnedVideos = storageManager.calculateDirectoryBytes(storageManager.offlineVideosDir)
+
+        val cachedCount = items.count { it.storageState == CloudStorageState.CACHED }
+        val lastSync = items.mapNotNull { it.lastSynchronizedAtMillis }.maxOrNull()
+
+        return CloudCacheStorageSummary(
+            cachedPhotoBytes = cachedPhotos,
+            cachedVideoBytes = cachedVideos,
+            thumbnailBytes = thumbs,
+            pinnedBytes = pinnedPhotos + pinnedVideos,
+            cachedFileCount = cachedCount,
+            lastSynchronizationMillis = lastSync,
+        )
+    }
+
+    override suspend fun setPinned(driveId: String, itemId: String, pinned: Boolean): Unit = withContext(Dispatchers.IO) {
+        val entity = cacheDao.find(driveId, itemId) ?: return@withContext
+        val currentPath = entity.localCachedPath
+
+        val newTargetState = if (pinned) CloudStorageState.PINNED_OFFLINE else CloudStorageState.CACHED
+        val isVideo = entity.mimeType.startsWith("video")
+        val mediaType = if (isVideo) MediaType.VIDEO else MediaType.IMAGE
+
+        val newPath = if (!currentPath.isNullOrEmpty() && File(currentPath).exists()) {
+            storageManager.migratePinnedFile(currentPath, mediaType, pinned) ?: currentPath
+        } else {
+            currentPath
+        }
+
+        cacheDao.updateStorageState(
+            cacheId = entity.cacheId,
+            state = newTargetState,
+            path = newPath,
+            accessedTime = System.currentTimeMillis(),
+        )
+    }
+
+    override suspend fun clearTemporaryCache(): CacheClearResult = withContext(Dispatchers.IO) {
+        val (reclaimedBytes, removedCount) = storageManager.clearAllTemporaryCache()
+
+        // Update database records: only CACHED items become REMOTE_ONLY (PINNED_OFFLINE remains untouched)
+        val evictable = cacheDao.getEvictableItems()
+        for (item in evictable) {
+            cacheDao.updateStorageState(
+                cacheId = item.cacheId,
+                state = CloudStorageState.REMOTE_ONLY,
+                path = null,
+                accessedTime = System.currentTimeMillis(),
+            )
+        }
+
+        CacheClearResult(reclaimedBytes = reclaimedBytes, removedFiles = removedCount)
+    }
+
+    override suspend fun evict(policy: CloudCachePolicy): CacheClearResult = withContext(Dispatchers.IO) {
+        var reclaimed = 0L
+        var removed = 0
+        val currentCacheBytes = storageManager.calculateDirectoryBytes(storageManager.cachePhotosDir) +
+                storageManager.calculateDirectoryBytes(storageManager.cacheVideosDir)
+
+        val evictableItems = cacheDao.getEvictableItems()
+        val expiryThreshold = System.currentTimeMillis() - (policy.evictCachedAfterDays.toLong() * 24 * 60 * 60 * 1000)
+
+        var runningBytes = currentCacheBytes
+
+        for (item in evictableItems) {
+            val lastAccess = item.lastAccessedAtMillis ?: 0L
+            val isExpired = lastAccess > 0 && lastAccess < expiryThreshold
+            val isOverCapacity = runningBytes > policy.maxCacheBytes
+
+            if (isExpired || isOverCapacity) {
+                val path = item.localCachedPath
+                if (!path.isNullOrEmpty() && storageManager.deleteCachedFileSafely(path)) {
+                    val size = item.originalSizeBytes
+                    reclaimed += size
+                    removed++
+                    runningBytes -= size
+                    cacheDao.updateStorageState(
+                        cacheId = item.cacheId,
+                        state = CloudStorageState.REMOTE_ONLY,
+                        path = null,
+                        accessedTime = System.currentTimeMillis(),
+                    )
+                }
+            }
+        }
+
+        CacheClearResult(reclaimedBytes = reclaimed, removedFiles = removed)
+    }
+}
