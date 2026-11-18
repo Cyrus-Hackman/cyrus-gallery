@@ -66,6 +66,10 @@ dependencies {
     }
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // WorkManager — Background Sync & Cache Jobs (Phase 4)
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("androidx.hilt:hilt-work:1.2.0")
+
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
