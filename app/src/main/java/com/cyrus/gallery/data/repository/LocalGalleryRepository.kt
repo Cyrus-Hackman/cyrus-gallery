@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import com.cyrus.gallery.domain.model.Album
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.MediaSource
 import com.cyrus.gallery.domain.model.MediaType
@@ -47,6 +48,22 @@ class LocalGalleryRepository @Inject constructor(
         }
     }
 
+    override fun observeAlbums(): Flow<List<Album>> = observeMedia().map { mediaList ->
+        mediaList
+            .groupBy { it.albumId ?: it.albumName ?: "device" }
+            .map { (albumId, items) ->
+                val first = items.firstOrNull()
+                Album(
+                    id = albumId,
+                    name = first?.albumName ?: "Device Media",
+                    coverUri = first?.localContentUri,
+                    itemCount = items.size,
+                    source = MediaSource.LOCAL,
+                )
+            }
+            .sortedByDescending { it.itemCount }
+    }
+
     private fun queryAll(): List<MediaItem> =
         (queryCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaType.IMAGE) +
                 queryCollection(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, MediaType.VIDEO))
@@ -60,6 +77,8 @@ class LocalGalleryRepository @Inject constructor(
             MediaStore.MediaColumns.MIME_TYPE,
             MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.DATE_MODIFIED,
+            MediaStore.MediaColumns.BUCKET_ID,
+            MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
             if (type == MediaType.VIDEO) MediaStore.Video.Media.DURATION else MediaStore.MediaColumns.WIDTH,
         )
 
@@ -83,6 +102,8 @@ class LocalGalleryRepository @Inject constructor(
             val mimeCol = it.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
             val addedCol = it.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
             val modifiedCol = it.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
+            val bucketIdCol = it.getColumnIndex(MediaStore.MediaColumns.BUCKET_ID)
+            val bucketNameCol = it.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
             val extraCol = it.getColumnIndex(
                 if (type == MediaType.VIDEO) MediaStore.Video.Media.DURATION
                 else MediaStore.MediaColumns.WIDTH,
@@ -93,6 +114,8 @@ class LocalGalleryRepository @Inject constructor(
                 val contentUri = ContentUris.withAppendedId(collectionUri, id)
                 val dateAdded = it.getLong(addedCol).takeIf { v -> v > 0 }
                 val dateModified = it.getLong(modifiedCol).takeIf { v -> v > 0 }
+                val bucketId = if (bucketIdCol >= 0) it.getString(bucketIdCol) else null
+                val bucketName = if (bucketNameCol >= 0) it.getString(bucketNameCol) else null
                 val duration = if (type == MediaType.VIDEO && extraCol >= 0) it.getLong(extraCol) else null
 
                 items.add(
@@ -106,6 +129,8 @@ class LocalGalleryRepository @Inject constructor(
                         modifiedAt = dateModified?.let { s -> Instant.ofEpochSecond(s) },
                         localContentUri = contentUri,
                         durationMillis = duration,
+                        albumId = bucketId,
+                        albumName = bucketName,
                     ),
                 )
             }
