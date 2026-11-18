@@ -19,6 +19,8 @@ data class MediaItem(
     val cloudStorageState: CloudStorageState? = null,
     val durationMillis: Long? = null,
     val isFavourite: Boolean = false,
+    val albumId: String? = null,
+    val albumName: String? = null,
 )
 
 enum class MediaSource { LOCAL, ONEDRIVE }
