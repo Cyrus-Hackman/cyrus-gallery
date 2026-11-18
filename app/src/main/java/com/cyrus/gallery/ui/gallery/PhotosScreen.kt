@@ -1,0 +1,74 @@
+package com.cyrus.gallery.ui.gallery
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.cyrus.gallery.ui.components.EmptyLibraryState
+import com.cyrus.gallery.ui.permissions.MediaPermissionGate
+
+@Composable
+fun PhotosScreen(onSettings: () -> Unit, viewModel: GalleryViewModel = viewModel()) {
+    val state = viewModel.uiState.collectAsStateWithLifecycle().value
+
+    Column(Modifier.fillMaxSize()) {
+        // Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(start = 20.dp, top = 18.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column {
+                Text("Cyrus Gallery", style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    "Your photos, in one place",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Row {
+                // Search enabled in Phase 5
+                IconButton(onClick = {}, enabled = false) { Icon(Icons.Outlined.Search, "Search") }
+                IconButton(onClick = onSettings) { Icon(Icons.Outlined.MoreVert, "Settings") }
+            }
+        }
+
+        // Permission gate wraps the grid
+        MediaPermissionGate { hasPartialAccess ->
+            if (state.isLoading) return@MediaPermissionGate
+            if (!state.hasMedia) {
+                EmptyLibraryState(
+                    icon = Icons.Outlined.PhotoLibrary,
+                    title = if (hasPartialAccess) "Limited access" else "No media found",
+                    message = if (hasPartialAccess)
+                        "You've granted access to selected photos only. Expand access in Settings to see your full library."
+                    else
+                        "No photos or videos were found on this device.",
+                )
+            } else {
+                MediaGrid(state.groups, Modifier.fillMaxSize())
+            }
+        }
+    }
+}
+
