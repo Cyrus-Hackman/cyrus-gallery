@@ -1,5 +1,5 @@
 {
-  "client_id": "00000000-0000-0000-0000-000000000000",
+  "client_id": "07d249a4-9729-4a3d-93b0-056007be55bb",
   "authorization_user_agent": "DEFAULT",
   "redirect_uri": "msauth://com.cyrus.gallery/yzY7J5hPXj7sH4efdsdtGVJYKCY%3D",
   "account_mode": "SINGLE",
@@ -8,7 +8,7 @@
     {
       "type": "AAD",
       "audience": {
-        "type": "AzureADandPersonalMicrosoftAccount"
+        "type": "PersonalMicrosoftAccount"
       },
       "default": true
     }

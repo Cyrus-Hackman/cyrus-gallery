@@ -22,7 +22,7 @@ import com.cyrus.gallery.ui.gallery.MediaGrid
 
 @Composable
 fun FavouritesScreen(
-    onMediaClick: (MediaItem) -> Unit = {},
+    onMediaClick: (MediaItem, List<MediaItem>) -> Unit = { _, _ -> },
     viewModel: GalleryViewModel = hiltViewModel(),
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value

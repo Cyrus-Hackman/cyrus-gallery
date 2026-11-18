@@ -10,10 +10,12 @@ import com.cyrus.gallery.domain.model.CloudStorageState
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.MediaSource
 import com.cyrus.gallery.domain.model.MediaType
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,77 +32,127 @@ class OneDriveRepository @Inject constructor(
 
     private var currentDeltaLink: String? = null
 
-    /** Performs an incremental delta sync from OneDrive root to discover media and deletions. */
-    suspend fun performDeltaSync(): Result<Int> {
-        val deltaResult = graphClient.getDelta(currentDeltaLink)
-        if (deltaResult.isFailure) {
-            return Result.failure(deltaResult.exceptionOrNull() ?: Exception("Delta sync failed"))
-        }
-
-        val result = deltaResult.getOrThrow()
-        currentDeltaLink = result.deltaLink ?: result.nextLink
-
-        // Process additions and modifications
-        val newMedia = mutableListOf<MediaItem>()
-        val newFolders = mutableListOf<Album>()
-
-        for (item in result.items) {
-            if (item.isFolder) {
-                newFolders.add(
-                    Album(
-                        id = item.id,
-                        name = item.name,
-                        coverThumbnailUrl = item.thumbnailUrl,
+    init {
+        // Hydrate from Room cache immediately on repository creation so cloud media
+        // is available instantly on app launch without needing to re-sync
+        CoroutineScope(Dispatchers.IO).launch {
+            val cachedEntities = cacheDao.getAll()
+            if (cachedEntities.isNotEmpty() && _cloudItems.value.isEmpty()) {
+                _cloudItems.value = cachedEntities.map { entity ->
+                    val isVideo = entity.mimeType.startsWith("video/")
+                    MediaItem(
+                        id = "onedrive:${entity.oneDriveItemId}",
+                        displayName = entity.fileName,
+                        type = if (isVideo) MediaType.VIDEO else MediaType.IMAGE,
                         source = MediaSource.ONEDRIVE,
-                    ),
-                )
-            } else if (item.isImage || item.isVideo) {
-                val mediaType = if (item.isVideo) MediaType.VIDEO else MediaType.IMAGE
-                val mediaItem = MediaItem(
-                    id = "onedrive:${item.id}",
-                    displayName = item.name,
-                    type = mediaType,
-                    source = MediaSource.ONEDRIVE,
-                    mimeType = item.mimeType,
-                    createdAt = item.createdAt,
-                    modifiedAt = item.createdAt,
-                    oneDriveItemId = item.id,
-                    thumbnailUrl = item.thumbnailUrl,
-                    cloudStorageState = CloudStorageState.REMOTE_ONLY,
-                )
-                newMedia.add(mediaItem)
+                        mimeType = entity.mimeType,
+                        createdAt = entity.lastSynchronizedAtMillis?.let { java.time.Instant.ofEpochMilli(it) },
+                        modifiedAt = entity.lastSynchronizedAtMillis?.let { java.time.Instant.ofEpochMilli(it) },
+                        oneDriveItemId = entity.oneDriveItemId,
+                        thumbnailUrl = entity.thumbnailCachedPath
+                            ?: "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/thumbnails/0/medium/content",
+                        cloudStorageState = entity.storageState,
+                    )
+                }
+            }
+        }
+    }
 
-                // Record in Room cache entity
-                cacheDao.upsert(
-                    CloudMediaCacheEntity(
-                        cacheId = "onedrive_${item.id}",
-                        oneDriveItemId = item.id,
-                        driveId = item.parentFolderId ?: "root",
-                        fileName = item.name,
+    /**
+     * Performs a complete delta sync, following all paged nextLinks in a loop so the
+     * full OneDrive library is discovered in a single sync operation.
+     */
+    suspend fun performDeltaSync(): Result<Int> {
+        var nextLinkOrToken = currentDeltaLink
+        var totalSynced = 0
+
+        while (true) {
+            val deltaResult = graphClient.getDelta(nextLinkOrToken)
+            if (deltaResult.isFailure) {
+                return if (totalSynced > 0) {
+                    Result.success(totalSynced)
+                } else {
+                    Result.failure(deltaResult.exceptionOrNull() ?: Exception("Delta sync failed"))
+                }
+            }
+
+            val result = deltaResult.getOrThrow()
+
+            // Process additions and modifications for the current page
+            val newMedia = mutableListOf<MediaItem>()
+            val newFolders = mutableListOf<Album>()
+
+            for (item in result.items) {
+                if (item.isFolder) {
+                    newFolders.add(
+                        Album(
+                            id = item.id,
+                            name = item.name,
+                            coverThumbnailUrl = item.thumbnailUrl,
+                            source = MediaSource.ONEDRIVE,
+                        ),
+                    )
+                } else if (item.isImage || item.isVideo) {
+                    val mediaType = if (item.isVideo) MediaType.VIDEO else MediaType.IMAGE
+                    val mediaItem = MediaItem(
+                        id = "onedrive:${item.id}",
+                        displayName = item.name,
+                        type = mediaType,
+                        source = MediaSource.ONEDRIVE,
                         mimeType = item.mimeType,
-                        originalSizeBytes = item.sizeBytes,
-                        storageState = CloudStorageState.REMOTE_ONLY,
-                        downloadStatus = CloudDownloadStatus.NOT_DOWNLOADED,
-                        eTag = item.eTag,
-                        cTag = item.cTag,
-                        lastSynchronizedAtMillis = System.currentTimeMillis(),
-                    ),
-                )
+                        createdAt = item.createdAt,
+                        modifiedAt = item.createdAt,
+                        oneDriveItemId = item.id,
+                        thumbnailUrl = item.thumbnailUrl,
+                        cloudStorageState = CloudStorageState.REMOTE_ONLY,
+                    )
+                    newMedia.add(mediaItem)
+
+                    // Record in Room cache entity with thumbnail path
+                    cacheDao.upsert(
+                        CloudMediaCacheEntity(
+                            cacheId = "onedrive_${item.id}",
+                            oneDriveItemId = item.id,
+                            driveId = item.parentFolderId ?: "root",
+                            fileName = item.name,
+                            mimeType = item.mimeType,
+                            originalSizeBytes = item.sizeBytes,
+                            thumbnailCachedPath = item.thumbnailUrl,
+                            storageState = CloudStorageState.REMOTE_ONLY,
+                            downloadStatus = CloudDownloadStatus.NOT_DOWNLOADED,
+                            eTag = item.eTag,
+                            cTag = item.cTag,
+                            lastSynchronizedAtMillis = System.currentTimeMillis(),
+                        ),
+                    )
+                }
+            }
+
+            // Process deletions
+            for (deletedId in result.deletedIds) {
+                cacheDao.removeRecord("onedrive_$deletedId")
+            }
+
+            totalSynced += newMedia.size
+
+            // Progressively update in-memory list after each page so UI updates live
+            _cloudItems.value = (newMedia + _cloudItems.value.filter { it.oneDriveItemId !in result.deletedIds })
+                .distinctBy { it.id }
+                .sortedByDescending { it.createdAt ?: java.time.Instant.EPOCH }
+
+            _cloudFolders.value = (_cloudFolders.value + newFolders).distinctBy { it.id }
+
+            if (!result.nextLink.isNullOrEmpty()) {
+                // Continue fetching subsequent pages
+                nextLinkOrToken = result.nextLink
+            } else {
+                // Completed all pages; persist deltaLink for incremental updates
+                currentDeltaLink = result.deltaLink
+                break
             }
         }
 
-        // Process deletions
-        for (deletedId in result.deletedIds) {
-            cacheDao.removeRecord("onedrive_$deletedId")
-        }
-
-        _cloudItems.value = (newMedia + _cloudItems.value.filter { it.oneDriveItemId !in result.deletedIds })
-            .distinctBy { it.id }
-            .sortedByDescending { it.createdAt ?: java.time.Instant.EPOCH }
-
-        _cloudFolders.value = newFolders.distinctBy { it.id }
-
-        return Result.success(newMedia.size)
+        return Result.success(totalSynced)
     }
 
     /** Browse items within a specific OneDrive folder with pagination. */

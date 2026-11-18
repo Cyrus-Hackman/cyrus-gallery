@@ -46,7 +46,7 @@ import com.cyrus.gallery.ui.gallery.MediaGrid
 
 @Composable
 fun OneDriveScreen(
-    onMediaClick: (MediaItem) -> Unit = {},
+    onMediaClick: (MediaItem, List<MediaItem>) -> Unit = { _, _ -> },
     viewModel: OneDriveViewModel = hiltViewModel(),
 ) {
     val authState = viewModel.authState.collectAsStateWithLifecycle().value

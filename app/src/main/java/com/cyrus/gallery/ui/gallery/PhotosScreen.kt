@@ -1,5 +1,6 @@
 package com.cyrus.gallery.ui.gallery
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,10 +31,15 @@ import com.cyrus.gallery.ui.permissions.MediaPermissionGate
 @Composable
 fun PhotosScreen(
     onSettings: () -> Unit,
-    onMediaClick: (MediaItem) -> Unit = {},
+    onMediaClick: (MediaItem, List<MediaItem>) -> Unit = { _, _ -> },
     viewModel: GalleryViewModel = hiltViewModel(),
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
+
+    // Close search on phone back gesture / button press instead of quitting app
+    BackHandler(enabled = state.isSearchActive) {
+        viewModel.setSearchActive(false)
+    }
 
     Column(Modifier.fillMaxSize()) {
         // Header

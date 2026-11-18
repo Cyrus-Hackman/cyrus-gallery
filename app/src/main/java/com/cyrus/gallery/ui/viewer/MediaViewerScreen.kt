@@ -1,6 +1,5 @@
 package com.cyrus.gallery.ui.viewer
 
-import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -9,13 +8,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Favorite
@@ -56,19 +56,42 @@ import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.cyrus.gallery.domain.model.CloudStorageState
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.MediaSource
 import com.cyrus.gallery.domain.model.MediaType
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaViewerScreen(
     item: MediaItem,
     onBack: () -> Unit,
     viewModel: MediaViewerViewModel = hiltViewModel(),
 ) {
-    val context = LocalContext.current
+    MediaViewerScreen(
+        items = listOf(item),
+        initialIndex = 0,
+        onBack = onBack,
+        viewModel = viewModel,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MediaViewerScreen(
+    items: List<MediaItem>,
+    initialIndex: Int = 0,
+    onBack: () -> Unit,
+    viewModel: MediaViewerViewModel = hiltViewModel(),
+) {
+    if (items.isEmpty()) return
+
+    val pagerState = rememberPagerState(
+        initialPage = initialIndex.coerceIn(0, items.size - 1),
+        pageCount = { items.size },
+    )
+    val currentItem = items.getOrNull(pagerState.currentPage) ?: return
+
     var controlsVisible by remember { mutableStateOf(true) }
     var showMetadataSheet by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -84,91 +107,45 @@ fun MediaViewerScreen(
         }
     }
 
-    // Zoom & pan state for images
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
+    // Track active page zoom so horizontal pager gestures don't conflict with zoom/pan
+    var currentScale by remember { mutableFloatStateOf(1f) }
+
+    LaunchedEffect(pagerState.currentPage) {
+        currentScale = 1f
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black),
     ) {
-        // Media Content (Image or Video)
-        if (item.type == MediaType.VIDEO) {
-            val mediaUri = item.localContentUri
-            if (mediaUri != null) {
-                val exoPlayer = remember(mediaUri) {
-                    ExoPlayer.Builder(context).build().apply {
-                        setMediaItem(ExoMediaItem.fromUri(mediaUri))
-                        prepare()
-                        playWhenReady = true
-                    }
-                }
+        // Horizontal Pager for swiping left & right
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+            userScrollEnabled = currentScale <= 1.05f,
+        ) { page ->
+            val pageItem = items[page]
+            val isCurrentPage = page == pagerState.currentPage
 
-                DisposableEffect(exoPlayer) {
-                    onDispose { exoPlayer.release() }
-                }
-
-                AndroidView(
-                    factory = { ctx ->
-                        PlayerView(ctx).apply {
-                            player = exoPlayer
-                            useController = true
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize(),
+            if (pageItem.type == MediaType.VIDEO) {
+                VideoPage(
+                    item = pageItem,
+                    isCurrentPage = isCurrentPage,
+                    onToggleControls = { controlsVisible = !controlsVisible },
                 )
             } else {
-                // Cloud video thumbnail preview if not downloaded
-                AsyncImage(
-                    model = item.thumbnailUrl,
-                    contentDescription = item.displayName,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize(),
+                ZoomableImagePage(
+                    item = pageItem,
+                    isCurrentPage = isCurrentPage,
+                    onToggleControls = { controlsVisible = !controlsVisible },
+                    onScaleChanged = { scale ->
+                        if (isCurrentPage) {
+                            currentScale = scale
+                        }
+                    },
                 )
             }
-        } else {
-            // Zoomable Image
-            AsyncImage(
-                model = item.localContentUri ?: item.thumbnailUrl,
-                contentDescription = item.displayName,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onTap = { controlsVisible = !controlsVisible },
-                            onDoubleTap = {
-                                if (scale > 1f) {
-                                    scale = 1f
-                                    offsetX = 0f
-                                    offsetY = 0f
-                                } else {
-                                    scale = 2.5f
-                                }
-                            },
-                        )
-                    }
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            scale = (scale * zoom).coerceIn(1f, 5f)
-                            if (scale > 1f) {
-                                offsetX += pan.x
-                                offsetY += pan.y
-                            } else {
-                                offsetX = 0f
-                                offsetY = 0f
-                            }
-                        }
-                    }
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offsetX,
-                        translationY = offsetY,
-                    ),
-            )
         }
 
         // Top Overlay Bar
@@ -191,9 +168,14 @@ fun MediaViewerScreen(
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back", tint = Color.White)
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
-                    Text(item.displayName, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1)
                     Text(
-                        if (item.source == MediaSource.LOCAL) "Local" else "OneDrive",
+                        text = currentItem.displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = "${pagerState.currentPage + 1} of ${items.size} • ${if (currentItem.source == MediaSource.LOCAL) "Local" else "OneDrive"}",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.LightGray,
                     )
@@ -221,32 +203,32 @@ fun MediaViewerScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 // Favorite Toggle
-                IconButton(onClick = { viewModel.toggleFavorite(item) }) {
+                IconButton(onClick = { viewModel.toggleFavorite(currentItem) }) {
                     Icon(
-                        if (item.isFavourite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                        if (currentItem.isFavourite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                         contentDescription = "Favorite",
-                        tint = if (item.isFavourite) Color.Red else Color.White,
+                        tint = if (currentItem.isFavourite) Color.Red else Color.White,
                     )
                 }
 
                 // Cloud actions
-                if (item.source == MediaSource.ONEDRIVE) {
-                    val isPinned = item.cloudStorageState == CloudStorageState.PINNED_OFFLINE
-                    IconButton(onClick = { viewModel.togglePinned(item) }) {
+                if (currentItem.source == MediaSource.ONEDRIVE) {
+                    val isPinned = currentItem.cloudStorageState == CloudStorageState.PINNED_OFFLINE
+                    IconButton(onClick = { viewModel.togglePinned(currentItem) }) {
                         Icon(
                             Icons.Outlined.PushPin,
                             contentDescription = "Pin Offline",
                             tint = if (isPinned) MaterialTheme.colorScheme.primary else Color.White,
                         )
                     }
-                    if (item.cloudStorageState == CloudStorageState.REMOTE_ONLY) {
-                        IconButton(onClick = { viewModel.downloadOnDemand(item) }) {
+                    if (currentItem.cloudStorageState == CloudStorageState.REMOTE_ONLY) {
+                        IconButton(onClick = { viewModel.downloadOnDemand(currentItem) }) {
                             Icon(Icons.Outlined.CloudDownload, contentDescription = "Download", tint = Color.White)
                         }
                     }
                 } else {
                     // Local media: upload to OneDrive
-                    IconButton(onClick = { viewModel.uploadToOneDrive(item) }) {
+                    IconButton(onClick = { viewModel.uploadToOneDrive(currentItem) }) {
                         Icon(Icons.Outlined.CloudUpload, contentDescription = "Upload to OneDrive", tint = Color.White)
                     }
                 }
@@ -269,7 +251,7 @@ fun MediaViewerScreen(
     // Metadata Bottom Sheet
     if (showMetadataSheet) {
         MediaMetadataSheet(
-            item = item,
+            item = currentItem,
             sheetState = sheetState,
             onDismiss = { showMetadataSheet = false },
         )
@@ -278,14 +260,152 @@ fun MediaViewerScreen(
     // Delete Confirmation Dialog
     if (showDeleteDialog) {
         MediaDeleteDialog(
-            item = item,
+            item = currentItem,
             onConfirm = { target ->
                 showDeleteDialog = false
-                viewModel.deleteMedia(item, target) {
+                viewModel.deleteMedia(currentItem, target) {
                     onBack()
                 }
             },
             onDismiss = { showDeleteDialog = false },
         )
+    }
+}
+
+@Composable
+private fun ZoomableImagePage(
+    item: MediaItem,
+    isCurrentPage: Boolean,
+    onToggleControls: () -> Unit,
+    onScaleChanged: (Float) -> Unit,
+) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(isCurrentPage) {
+        if (!isCurrentPage) {
+            scale = 1f
+            offsetX = 0f
+            offsetY = 0f
+            onScaleChanged(1f)
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onToggleControls() },
+                    onDoubleTap = {
+                        if (scale > 1f) {
+                            scale = 1f
+                            offsetX = 0f
+                            offsetY = 0f
+                        } else {
+                            scale = 2.5f
+                        }
+                        onScaleChanged(scale)
+                    },
+                )
+            }
+            .pointerInput(Unit) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    scale = (scale * zoom).coerceIn(1f, 5f)
+                    onScaleChanged(scale)
+                    if (scale > 1f) {
+                        offsetX += pan.x
+                        offsetY += pan.y
+                    } else {
+                        offsetX = 0f
+                        offsetY = 0f
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        AsyncImage(
+            model = item.localContentUri ?: item.thumbnailUrl,
+            contentDescription = item.displayName,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer(
+                    scaleX = scale,
+                    scaleY = scale,
+                    translationX = offsetX,
+                    translationY = offsetY,
+                ),
+        )
+    }
+}
+
+@Composable
+private fun VideoPage(
+    item: MediaItem,
+    isCurrentPage: Boolean,
+    onToggleControls: () -> Unit,
+) {
+    val context = LocalContext.current
+    val mediaUri = item.localContentUri
+
+    if (mediaUri != null) {
+        val exoPlayer = remember(mediaUri) {
+            ExoPlayer.Builder(context).build().apply {
+                setMediaItem(ExoMediaItem.fromUri(mediaUri))
+                prepare()
+                playWhenReady = isCurrentPage
+            }
+        }
+
+        LaunchedEffect(isCurrentPage) {
+            exoPlayer.playWhenReady = isCurrentPage
+        }
+
+        DisposableEffect(exoPlayer) {
+            onDispose { exoPlayer.release() }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { onToggleControls() })
+                },
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        player = exoPlayer
+                        useController = true
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    } else {
+        // Cloud video preview if not downloaded
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { onToggleControls() })
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            AsyncImage(
+                model = item.thumbnailUrl,
+                contentDescription = item.displayName,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Icon(
+                imageVector = Icons.Outlined.CloudDownload,
+                contentDescription = "Cloud Video",
+                tint = Color.White.copy(alpha = 0.85f),
+                modifier = Modifier.size(64.dp),
+            )
+        }
     }
 }

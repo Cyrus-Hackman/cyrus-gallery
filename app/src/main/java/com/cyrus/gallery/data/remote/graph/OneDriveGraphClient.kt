@@ -235,6 +235,14 @@ class OneDriveGraphClientImpl @Inject constructor(
         val parentRef = obj.optJSONObject("parentReference")
         val parentFolderId = parentRef?.optString("id")
 
+        // Priority for thumbnail:
+        // 1. Direct thumbnail URL from thumbnails array (if expanded)
+        // 2. Direct downloadUrl (pre-authenticated CDN link)
+        // 3. Fallback to Microsoft Graph standard medium thumbnail endpoint (handled by authenticated Coil loader)
+        val effectiveThumbnailUrl = thumbnailUrl
+            ?: downloadUrl
+            ?: "$GRAPH_BASE_URL/me/drive/items/$id/thumbnails/0/medium/content"
+
         return GraphDriveItem(
             id = id,
             name = name,
@@ -246,7 +254,7 @@ class OneDriveGraphClientImpl @Inject constructor(
             isVideo = isVideo,
             mimeType = mimeType,
             createdAt = createdAt,
-            thumbnailUrl = thumbnailUrl,
+            thumbnailUrl = effectiveThumbnailUrl,
             downloadUrl = downloadUrl,
             parentFolderId = parentFolderId,
         )

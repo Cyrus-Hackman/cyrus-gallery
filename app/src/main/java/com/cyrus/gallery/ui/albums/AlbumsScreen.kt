@@ -1,5 +1,6 @@
 package com.cyrus.gallery.ui.albums
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -51,13 +52,18 @@ import com.cyrus.gallery.ui.permissions.MediaPermissionGate
 
 @Composable
 fun AlbumsScreen(
-    onMediaClick: (MediaItem) -> Unit = {},
+    onMediaClick: (MediaItem, List<MediaItem>) -> Unit = { _, _ -> },
     viewModel: AlbumsViewModel = hiltViewModel(),
     galleryViewModel: GalleryViewModel = hiltViewModel(),
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
     val galleryState = galleryViewModel.uiState.collectAsStateWithLifecycle().value
     var selectedAlbum by remember { mutableStateOf<Album?>(null) }
+
+    // Intercept phone's physical back button when inside an album
+    BackHandler(enabled = selectedAlbum != null) {
+        selectedAlbum = null
+    }
 
     Column(Modifier.fillMaxSize()) {
         val currentAlbum = selectedAlbum

@@ -45,7 +45,9 @@ class OneDriveAuthManagerImpl @Inject constructor(
     private var clientApp: ISingleAccountPublicClientApplication? = null
     private var currentAccount: IAccount? = null
 
-    private val scopes = arrayOf("User.Read", "Files.Read", "Files.Read.All", "offline_access")
+    // Note: Do not include 'offline_access' in MSAL scopes array; MSAL manages refresh tokens internally.
+    // For personal accounts, Files.Read provides access to OneDrive files.
+    private val scopes = arrayOf("User.Read", "Files.Read")
 
     private suspend fun ensureClient(): Result<ISingleAccountPublicClientApplication> {
         clientApp?.let { return Result.success(it) }

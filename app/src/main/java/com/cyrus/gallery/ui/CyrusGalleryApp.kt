@@ -1,7 +1,10 @@
 package com.cyrus.gallery.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -32,20 +35,21 @@ import com.cyrus.gallery.ui.viewer.MediaViewerScreen
 fun CyrusGalleryApp() {
     val navController = rememberNavController()
     val current = navController.currentBackStackEntryAsState().value?.destination?.route
-    var viewingMedia by remember { mutableStateOf<MediaItem?>(null) }
+    var viewingState by remember { mutableStateOf<Pair<List<MediaItem>, Int>?>(null) }
 
-    val activeItem = viewingMedia
-    if (activeItem != null) {
-        // Fullscreen Image/Video Viewer
-        MediaViewerScreen(
-            item = activeItem,
-            onBack = { viewingMedia = null },
-        )
-    } else {
+    val activeState = viewingState
+
+    // Intercept phone's physical back button / swipe back gesture when viewer is open
+    BackHandler(enabled = activeState != null) {
+        viewingState = null
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        // App Scaffold remains persistently composed so grid scroll position is never lost
         Scaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             bottomBar = {
-                if (current != "settings") NavigationBar {
+                if (current != "settings" && activeState == null) NavigationBar {
                     GalleryDestination.entries.forEach { destination ->
                         NavigationBarItem(
                             selected = current == destination.route,
@@ -66,7 +70,19 @@ fun CyrusGalleryApp() {
             GalleryNavHost(
                 navController = navController,
                 padding = padding,
-                onMediaClick = { viewingMedia = it },
+                onMediaClick = { clickedItem, allItems ->
+                    val index = allItems.indexOfFirst { it.id == clickedItem.id }.coerceAtLeast(0)
+                    viewingState = Pair(allItems, index)
+                },
+            )
+        }
+
+        // Fullscreen Image/Video Viewer overlaid on top without disposing the grid
+        if (activeState != null && activeState.first.isNotEmpty()) {
+            MediaViewerScreen(
+                items = activeState.first,
+                initialIndex = activeState.second,
+                onBack = { viewingState = null },
             )
         }
     }
@@ -76,7 +92,7 @@ fun CyrusGalleryApp() {
 private fun GalleryNavHost(
     navController: androidx.navigation.NavHostController,
     padding: PaddingValues,
-    onMediaClick: (MediaItem) -> Unit,
+    onMediaClick: (MediaItem, List<MediaItem>) -> Unit,
 ) {
     NavHost(navController, startDestination = GalleryDestination.PHOTOS.route, modifier = Modifier.padding(padding)) {
         composable("photos") {
