@@ -39,12 +39,16 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cyrus.gallery.data.auth.AuthState
+import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.groupByMonth
 import com.cyrus.gallery.ui.components.EmptyLibraryState
 import com.cyrus.gallery.ui.gallery.MediaGrid
 
 @Composable
-fun OneDriveScreen(viewModel: OneDriveViewModel = viewModel()) {
+fun OneDriveScreen(
+    onMediaClick: (MediaItem) -> Unit = {},
+    viewModel: OneDriveViewModel = viewModel(),
+) {
     val authState = viewModel.authState.collectAsStateWithLifecycle().value
     val cloudMedia = viewModel.cloudMedia.collectAsStateWithLifecycle().value
     val isSyncing = viewModel.isSyncing.collectAsStateWithLifecycle().value
@@ -123,6 +127,7 @@ fun OneDriveScreen(viewModel: OneDriveViewModel = viewModel()) {
                     MediaGrid(
                         groups = cloudMedia.groupByMonth(),
                         modifier = Modifier.fillMaxSize(),
+                        onMediaClick = onMediaClick,
                     )
                 }
             }

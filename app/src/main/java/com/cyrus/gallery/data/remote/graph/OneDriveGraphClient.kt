@@ -3,8 +3,10 @@ package com.cyrus.gallery.data.remote.graph
 import com.cyrus.gallery.data.auth.OneDriveAuthManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
 import java.time.Instant

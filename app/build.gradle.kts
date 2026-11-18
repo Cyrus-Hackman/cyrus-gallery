@@ -15,7 +15,18 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        debug {
+            isDebuggable = true
+        }
     }
 
     buildFeatures { compose = true; buildConfig = true }
@@ -69,8 +80,10 @@ dependencies {
     // WorkManager — Background Sync & Cache Jobs (Phase 4)
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("androidx.hilt:hilt-work:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.2.0")
 
     // Media Playback & EXIF Metadata (Phase 5)
+    implementation("androidx.media3:media3-common:1.5.0")
     implementation("androidx.media3:media3-exoplayer:1.5.0")
     implementation("androidx.media3:media3-ui:1.5.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
