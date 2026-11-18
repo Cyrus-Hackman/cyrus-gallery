@@ -50,7 +50,8 @@ class OneDriveRepository @Inject constructor(
                         modifiedAt = entity.lastSynchronizedAtMillis?.let { java.time.Instant.ofEpochMilli(it) },
                         oneDriveItemId = entity.oneDriveItemId,
                         thumbnailUrl = entity.thumbnailCachedPath
-                            ?: "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/thumbnails/0/medium/content",
+                            ?: "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/thumbnails/0/large/content",
+                        highResUrl = "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/content",
                         cloudStorageState = entity.storageState,
                     )
                 }
@@ -104,6 +105,7 @@ class OneDriveRepository @Inject constructor(
                         modifiedAt = item.createdAt,
                         oneDriveItemId = item.id,
                         thumbnailUrl = item.thumbnailUrl,
+                        highResUrl = item.downloadUrl ?: "https://graph.microsoft.com/v1.0/me/drive/items/${item.id}/content",
                         cloudStorageState = CloudStorageState.REMOTE_ONLY,
                     )
                     newMedia.add(mediaItem)
@@ -174,6 +176,7 @@ class OneDriveRepository @Inject constructor(
                     modifiedAt = item.createdAt,
                     oneDriveItemId = item.id,
                     thumbnailUrl = item.thumbnailUrl,
+                    highResUrl = item.downloadUrl ?: "https://graph.microsoft.com/v1.0/me/drive/items/${item.id}/content",
                     cloudStorageState = CloudStorageState.REMOTE_ONLY,
                     albumId = folderId,
                 )
@@ -205,6 +208,7 @@ class OneDriveRepository @Inject constructor(
             modifiedAt = item.createdAt,
             oneDriveItemId = item.id,
             thumbnailUrl = item.thumbnailUrl,
+            highResUrl = item.downloadUrl ?: "https://graph.microsoft.com/v1.0/me/drive/items/${item.id}/content",
             cloudStorageState = CloudStorageState.REMOTE_ONLY,
         )
         _cloudItems.value = (_cloudItems.value + mediaItem).sortedByDescending { it.createdAt ?: java.time.Instant.EPOCH }

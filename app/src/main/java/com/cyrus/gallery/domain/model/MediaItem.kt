@@ -15,6 +15,7 @@ data class MediaItem(
     val localContentUri: Uri? = null,
     val oneDriveItemId: String? = null,
     val thumbnailUrl: String? = null,
+    val highResUrl: String? = null,
     /** Null for permanent device media; required for OneDrive media. */
     val cloudStorageState: CloudStorageState? = null,
     val durationMillis: Long? = null,

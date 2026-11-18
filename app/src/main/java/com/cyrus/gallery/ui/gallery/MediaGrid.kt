@@ -75,7 +75,7 @@ private fun MediaThumbnail(item: MediaItem, onClick: () -> Unit) {
         ImageRequest.Builder(context)
             .data(item.localContentUri ?: item.thumbnailUrl)
             .crossfade(true)
-            .size(360, 360)
+            .size(480, 480)
             .apply {
                 if (item.localContentUri != null && item.type == MediaType.VIDEO) {
                     videoFrameMillis(1000L)

@@ -326,7 +326,7 @@ private fun ZoomableImagePage(
         contentAlignment = Alignment.Center,
     ) {
         AsyncImage(
-            model = item.localContentUri ?: item.thumbnailUrl,
+            model = item.localContentUri ?: item.highResUrl ?: item.thumbnailUrl,
             contentDescription = item.displayName,
             contentScale = ContentScale.Fit,
             modifier = Modifier

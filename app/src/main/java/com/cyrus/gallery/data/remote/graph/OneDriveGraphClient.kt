@@ -221,27 +221,24 @@ class OneDriveGraphClientImpl @Inject constructor(
             null
         }
 
-        // Thumbnails
+        // Thumbnails - prefer 'large' for crisp, high-quality rendering
         var thumbnailUrl: String? = null
         val thumbsArray = obj.optJSONArray("thumbnails")
         if (thumbsArray != null && thumbsArray.length() > 0) {
             val thumbSet = thumbsArray.getJSONObject(0)
-            val medium = thumbSet.optJSONObject("medium")
             val large = thumbSet.optJSONObject("large")
-            thumbnailUrl = (medium ?: large)?.optString("url")
+            val medium = thumbSet.optJSONObject("medium")
+            thumbnailUrl = (large ?: medium)?.optString("url")
         }
 
         val downloadUrl = obj.optString("@microsoft.graph.downloadUrl").takeIf { it.isNotEmpty() }
         val parentRef = obj.optJSONObject("parentReference")
         val parentFolderId = parentRef?.optString("id")
 
-        // Priority for thumbnail:
-        // 1. Direct thumbnail URL from thumbnails array (if expanded)
-        // 2. Direct downloadUrl (pre-authenticated CDN link)
-        // 3. Fallback to Microsoft Graph standard medium thumbnail endpoint (handled by authenticated Coil loader)
+        // High-quality thumbnail: prefer 'large' 800px preview over 176px medium to prevent blur
         val effectiveThumbnailUrl = thumbnailUrl
             ?: downloadUrl
-            ?: "$GRAPH_BASE_URL/me/drive/items/$id/thumbnails/0/medium/content"
+            ?: "$GRAPH_BASE_URL/me/drive/items/$id/thumbnails/0/large/content"
 
         return GraphDriveItem(
             id = id,
