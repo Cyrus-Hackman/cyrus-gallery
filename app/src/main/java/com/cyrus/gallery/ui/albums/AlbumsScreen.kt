@@ -1,14 +1,136 @@
 package com.cyrus.gallery.ui.albums
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Collections
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import com.cyrus.gallery.domain.model.Album
 import com.cyrus.gallery.ui.components.EmptyLibraryState
+import com.cyrus.gallery.ui.permissions.MediaPermissionGate
 
 @Composable
-fun AlbumsScreen() = EmptyLibraryState(
-    icon = Icons.Outlined.Collections,
-    title = "Albums will appear here",
-    message = "Device albums and OneDrive folders will remain clearly separated while still easy to browse.",
-)
+fun AlbumsScreen(viewModel: AlbumsViewModel = viewModel()) {
+    val state = viewModel.uiState.collectAsStateWithLifecycle().value
 
+    Column(Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 12.dp),
+        ) {
+            Text("Albums", style = MaterialTheme.typography.headlineMedium)
+            Text(
+                "Device collections and folders",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+
+        MediaPermissionGate { hasPartialAccess ->
+            if (state.isLoading) return@MediaPermissionGate
+            if (state.albums.isEmpty()) {
+                EmptyLibraryState(
+                    icon = Icons.Outlined.Collections,
+                    title = if (hasPartialAccess) "Limited album access" else "No albums found",
+                    message = if (hasPartialAccess)
+                        "Only selected photos are accessible. Grant full access to organize your albums."
+                    else
+                        "Albums and device folders will appear here once media is found.",
+                )
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    items(state.albums, key = { it.id }) { album ->
+                        AlbumCard(album = album, onClick = { /* View album media in Phase 5 */ })
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlbumCard(album: Album, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(MaterialTheme.shapes.medium)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (album.coverUri != null || album.coverThumbnailUrl != null) {
+                    AsyncImage(
+                        model = album.coverUri ?: album.coverThumbnailUrl,
+                        contentDescription = album.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Outlined.Folder,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = album.name,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "${album.itemCount} ${if (album.itemCount == 1) "item" else "items"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
