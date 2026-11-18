@@ -39,4 +39,8 @@ object NetworkModule {
     @Provides
     fun provideCloudMediaCacheDao(database: GalleryDatabase): CloudMediaCacheDao =
         database.cloudMediaCacheDao()
+
+    @Provides
+    fun provideFavoriteMediaDao(database: GalleryDatabase): com.cyrus.gallery.data.database.FavoriteMediaDao =
+        database.favoriteMediaDao()
 }

@@ -10,5 +10,9 @@ import kotlinx.coroutines.flow.flowOf
 class EmptyGalleryRepository : GalleryRepository {
     override fun observeMedia(): Flow<List<MediaItem>> = flowOf(emptyList())
     override fun observeAlbums(): Flow<List<Album>> = flowOf(emptyList())
+    override suspend fun setFavorite(mediaId: String, isFavorite: Boolean) = Unit
+    override suspend fun deleteLocalMedia(mediaItem: MediaItem): Result<Unit> = Result.success(Unit)
+    override suspend fun deleteCloudMedia(mediaItem: MediaItem): Result<Unit> = Result.success(Unit)
+    override suspend fun uploadToOneDrive(mediaItem: MediaItem): Result<String> = Result.success("ok")
 }
 

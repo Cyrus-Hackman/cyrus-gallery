@@ -1,6 +1,7 @@
 package com.cyrus.gallery.ui.gallery
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
@@ -11,6 +12,8 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -22,12 +25,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.cyrus.gallery.domain.model.CloudStorageState
 import com.cyrus.gallery.domain.model.MediaGroup
 import com.cyrus.gallery.domain.model.MediaItem
+import com.cyrus.gallery.domain.model.MediaSource
 import com.cyrus.gallery.domain.model.MediaType
 
 @Composable
-fun MediaGrid(groups: List<MediaGroup>, modifier: Modifier = Modifier) {
+fun MediaGrid(
+    groups: List<MediaGroup>,
+    modifier: Modifier = Modifier,
+    onMediaClick: ((MediaItem) -> Unit)? = null,
+) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 112.dp),
         modifier = modifier,
@@ -47,21 +56,22 @@ fun MediaGrid(groups: List<MediaGroup>, modifier: Modifier = Modifier) {
 
             // Media thumbnails
             items(group.items, key = { it.id }) { item ->
-                MediaThumbnail(item)
+                MediaThumbnail(item = item, onClick = { onMediaClick?.invoke(item) })
             }
         }
     }
 }
 
 @Composable
-private fun MediaThumbnail(item: MediaItem) {
+private fun MediaThumbnail(item: MediaItem, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .padding(1.dp)
             .fillMaxWidth()
             .aspectRatio(1f)
             .clip(MaterialTheme.shapes.extraSmall)
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         AsyncImage(
@@ -70,6 +80,7 @@ private fun MediaThumbnail(item: MediaItem) {
             contentScale = ContentScale.Crop,
             modifier = Modifier.matchParentSize(),
         )
+
         // Video overlay badge
         if (item.type == MediaType.VIDEO) {
             Icon(
@@ -78,6 +89,30 @@ private fun MediaThumbnail(item: MediaItem) {
                 tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
+                    .padding(6.dp),
+            )
+        }
+
+        // Cloud indicator badge
+        if (item.source == MediaSource.ONEDRIVE && item.cloudStorageState == CloudStorageState.REMOTE_ONLY) {
+            Icon(
+                imageVector = Icons.Outlined.CloudQueue,
+                contentDescription = "Cloud only",
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp),
+            )
+        }
+
+        // Favorite heart badge
+        if (item.isFavourite) {
+            Icon(
+                imageVector = Icons.Filled.Favorite,
+                contentDescription = "Favorite",
+                tint = androidx.compose.ui.graphics.Color.Red,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
                     .padding(6.dp),
             )
         }

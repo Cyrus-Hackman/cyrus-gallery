@@ -128,4 +128,34 @@ class OneDriveRepository @Inject constructor(
             }
         return Result.success(media)
     }
+
+    suspend fun deleteCloudItem(itemId: String): Result<Unit> {
+        val result = graphClient.deleteItem(itemId)
+        if (result.isSuccess) {
+            cacheDao.removeRecord("onedrive_$itemId")
+            _cloudItems.value = _cloudItems.value.filter { it.oneDriveItemId != itemId }
+        }
+        return result
+    }
+
+    suspend fun uploadMedia(fileName: String, bytes: ByteArray, mimeType: String): Result<MediaItem> {
+        val result = graphClient.uploadItem(fileName, bytes, mimeType)
+        if (result.isFailure) return Result.failure(result.exceptionOrNull() ?: Exception("Upload failed"))
+
+        val item = result.getOrThrow()
+        val mediaItem = MediaItem(
+            id = "onedrive:${item.id}",
+            displayName = item.name,
+            type = if (item.isVideo) MediaType.VIDEO else MediaType.IMAGE,
+            source = MediaSource.ONEDRIVE,
+            mimeType = item.mimeType,
+            createdAt = item.createdAt,
+            modifiedAt = item.createdAt,
+            oneDriveItemId = item.id,
+            thumbnailUrl = item.thumbnailUrl,
+            cloudStorageState = CloudStorageState.REMOTE_ONLY,
+        )
+        _cloudItems.value = (_cloudItems.value + mediaItem).sortedByDescending { it.createdAt ?: java.time.Instant.EPOCH }
+        return Result.success(mediaItem)
+    }
 }

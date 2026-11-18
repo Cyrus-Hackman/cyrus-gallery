@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,14 +18,20 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,49 +42,103 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.cyrus.gallery.domain.model.Album
+import com.cyrus.gallery.domain.model.MediaItem
+import com.cyrus.gallery.domain.model.groupByMonth
 import com.cyrus.gallery.ui.components.EmptyLibraryState
+import com.cyrus.gallery.ui.gallery.GalleryViewModel
+import com.cyrus.gallery.ui.gallery.MediaGrid
 import com.cyrus.gallery.ui.permissions.MediaPermissionGate
 
 @Composable
-fun AlbumsScreen(viewModel: AlbumsViewModel = viewModel()) {
+fun AlbumsScreen(
+    onMediaClick: (MediaItem) -> Unit = {},
+    viewModel: AlbumsViewModel = viewModel(),
+    galleryViewModel: GalleryViewModel = viewModel(),
+) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
+    val galleryState = galleryViewModel.uiState.collectAsStateWithLifecycle().value
+    var selectedAlbum by remember { mutableStateOf<Album?>(null) }
 
     Column(Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 12.dp),
-        ) {
-            Text("Albums", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                "Device collections and folders",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
+        val currentAlbum = selectedAlbum
+        if (currentAlbum != null) {
+            // Album Detail Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(start = 8.dp, top = 12.dp, end = 16.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = { selectedAlbum = null }) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back to albums")
+                }
+                Column(modifier = Modifier.padding(start = 8.dp)) {
+                    Text(currentAlbum.name, style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "${currentAlbum.itemCount} items",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
-        MediaPermissionGate { hasPartialAccess ->
-            if (state.isLoading) return@MediaPermissionGate
-            if (state.albums.isEmpty()) {
+            // Filter all media for this album
+            val albumMedia = galleryState.rawMedia.filter {
+                it.albumId == currentAlbum.id || it.albumName == currentAlbum.name
+            }
+
+            if (albumMedia.isEmpty()) {
                 EmptyLibraryState(
                     icon = Icons.Outlined.Collections,
-                    title = if (hasPartialAccess) "Limited album access" else "No albums found",
-                    message = if (hasPartialAccess)
-                        "Only selected photos are accessible. Grant full access to organize your albums."
-                    else
-                        "Albums and device folders will appear here once media is found.",
+                    title = "Album is empty",
+                    message = "No photos or videos found in this album.",
                 )
             } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
+                MediaGrid(
+                    groups = albumMedia.groupByMonth(),
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    items(state.albums, key = { it.id }) { album ->
-                        AlbumCard(album = album, onClick = { /* View album media in Phase 5 */ })
+                    onMediaClick = onMediaClick,
+                )
+            }
+        } else {
+            // Main Albums Grid Header
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 12.dp),
+            ) {
+                Text("Albums", style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    "Device collections and cloud folders",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            MediaPermissionGate { hasPartialAccess ->
+                if (state.isLoading) return@MediaPermissionGate
+                if (state.albums.isEmpty()) {
+                    EmptyLibraryState(
+                        icon = Icons.Outlined.Collections,
+                        title = if (hasPartialAccess) "Limited album access" else "No albums found",
+                        message = if (hasPartialAccess)
+                            "Only selected photos are accessible. Grant full access to organize your albums."
+                        else
+                            "Albums and device folders will appear here once media is found.",
+                    )
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        items(state.albums, key = { it.id }) { album ->
+                            AlbumCard(album = album, onClick = { selectedAlbum = album })
+                        }
                     }
                 }
             }

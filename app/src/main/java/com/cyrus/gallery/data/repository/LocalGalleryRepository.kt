@@ -64,6 +64,20 @@ class LocalGalleryRepository @Inject constructor(
             .sortedByDescending { it.itemCount }
     }
 
+    override suspend fun setFavorite(mediaId: String, isFavorite: Boolean) = Unit
+
+    override suspend fun deleteLocalMedia(mediaItem: MediaItem): Result<Unit> = runCatching {
+        val uri = mediaItem.localContentUri ?: throw IllegalArgumentException("No local URI for media")
+        val deleted = context.contentResolver.delete(uri, null, null)
+        if (deleted <= 0) throw IllegalStateException("Could not delete item")
+    }
+
+    override suspend fun deleteCloudMedia(mediaItem: MediaItem): Result<Unit> =
+        Result.failure(UnsupportedOperationException("Use cloud repository for OneDrive deletion"))
+
+    override suspend fun uploadToOneDrive(mediaItem: MediaItem): Result<String> =
+        Result.failure(UnsupportedOperationException("Use cloud repository for upload"))
+
     private fun queryAll(): List<MediaItem> =
         (queryCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaType.IMAGE) +
                 queryCollection(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, MediaType.VIDEO))

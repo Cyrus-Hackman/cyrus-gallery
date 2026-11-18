@@ -43,6 +43,8 @@ interface OneDriveGraphClient {
     suspend fun getDriveRootChildren(nextLink: String? = null): Result<GraphPagedResult>
     suspend fun getFolderChildren(folderId: String, nextLink: String? = null): Result<GraphPagedResult>
     suspend fun getDelta(deltaLinkOrToken: String? = null): Result<GraphDeltaResult>
+    suspend fun deleteItem(itemId: String): Result<Unit>
+    suspend fun uploadItem(fileName: String, bytes: ByteArray, mimeType: String): Result<GraphDriveItem>
 }
 
 @Singleton
@@ -101,6 +103,53 @@ class OneDriveGraphClientImpl @Inject constructor(
             else -> "$GRAPH_BASE_URL/me/drive/root/delta?token=$deltaLinkOrToken&\$select=$SELECT_FIELDS"
         }
         return executeGet(url).map { parseDeltaResult(it) }
+    }
+
+    override suspend fun deleteItem(itemId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val token = authManager.getAccessToken()
+            ?: return@withContext Result.failure(IllegalStateException("Not authenticated"))
+        val request = Request.Builder()
+            .url("$GRAPH_BASE_URL/me/drive/items/$itemId")
+            .delete()
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+        try {
+            httpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful || response.code == 204 || response.code == 404) {
+                    Result.success(Unit)
+                } else {
+                    Result.failure(IOException("Graph delete failed: ${response.code} ${response.message}"))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun uploadItem(fileName: String, bytes: ByteArray, mimeType: String): Result<GraphDriveItem> = withContext(Dispatchers.IO) {
+        val token = authManager.getAccessToken()
+            ?: return@withContext Result.failure(IllegalStateException("Not authenticated"))
+        val mediaType = okhttp3.MediaType.parse(mimeType)
+        val body = okhttp3.RequestBody.create(mediaType, bytes)
+        val url = "$GRAPH_BASE_URL/me/drive/root:/$fileName:/content"
+        val request = Request.Builder()
+            .url(url)
+            .put(body)
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+        try {
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(IOException("Graph upload failed: ${response.code} ${response.message}"))
+                }
+                val bodyStr = response.body?.string() ?: ""
+                val driveItem = parseDriveItem(JSONObject(bodyStr))
+                    ?: return@withContext Result.failure(IOException("Could not parse uploaded item"))
+                Result.success(driveItem)
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     private fun parsePagedResult(jsonString: String): GraphPagedResult {

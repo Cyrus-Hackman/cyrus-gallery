@@ -8,12 +8,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -21,35 +23,67 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.ui.components.EmptyLibraryState
 import com.cyrus.gallery.ui.permissions.MediaPermissionGate
 
 @Composable
-fun PhotosScreen(onSettings: () -> Unit, viewModel: GalleryViewModel = viewModel()) {
+fun PhotosScreen(
+    onSettings: () -> Unit,
+    onMediaClick: (MediaItem) -> Unit = {},
+    viewModel: GalleryViewModel = viewModel(),
+) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
 
     Column(Modifier.fillMaxSize()) {
         // Header
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(start = 20.dp, top = 18.dp, end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column {
-                Text("Cyrus Gallery", style = MaterialTheme.typography.headlineMedium)
-                Text(
-                    "Your photos, in one place",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium,
+        if (state.isSearchActive) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = state.searchQuery,
+                    onValueChange = { viewModel.onSearchQueryChanged(it) },
+                    placeholder = { Text("Search photos, videos, albums...") },
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                    trailingIcon = {
+                        IconButton(onClick = { viewModel.setSearchActive(false) }) {
+                            Icon(Icons.Outlined.Close, contentDescription = "Close search")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
                 )
             }
-            Row {
-                // Search enabled in Phase 5
-                IconButton(onClick = {}, enabled = false) { Icon(Icons.Outlined.Search, "Search") }
-                IconButton(onClick = onSettings) { Icon(Icons.Outlined.MoreVert, "Settings") }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(start = 20.dp, top = 18.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    Text("Cyrus Gallery", style = MaterialTheme.typography.headlineMedium)
+                    Text(
+                        "Your photos, in one place",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                Row {
+                    IconButton(onClick = { viewModel.setSearchActive(true) }) {
+                        Icon(Icons.Outlined.Search, "Search")
+                    }
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Outlined.MoreVert, "Settings")
+                    }
+                }
             }
         }
 
@@ -65,8 +99,18 @@ fun PhotosScreen(onSettings: () -> Unit, viewModel: GalleryViewModel = viewModel
                     else
                         "No photos or videos were found on this device.",
                 )
+            } else if (state.groups.isEmpty() && state.searchQuery.isNotEmpty()) {
+                EmptyLibraryState(
+                    icon = Icons.Outlined.Search,
+                    title = "No results found",
+                    message = "No photos matching \"${state.searchQuery}\" were found.",
+                )
             } else {
-                MediaGrid(state.groups, Modifier.fillMaxSize())
+                MediaGrid(
+                    groups = state.groups,
+                    modifier = Modifier.fillMaxSize(),
+                    onMediaClick = onMediaClick,
+                )
             }
         }
     }
