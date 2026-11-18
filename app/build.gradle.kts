@@ -60,6 +60,12 @@ dependencies {
     // Accompanist — permissions helper (Phase 2)
     implementation("com.google.accompanist:accompanist-permissions:0.37.0")
 
+    // MSAL & Networking — OneDrive Integration (Phase 3)
+    implementation("com.microsoft.identity.client:msal:5.4.0") {
+        exclude(group = "com.microsoft.device.display")
+    }
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
