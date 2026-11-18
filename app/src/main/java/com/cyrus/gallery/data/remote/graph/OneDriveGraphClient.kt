@@ -131,8 +131,8 @@ class OneDriveGraphClientImpl @Inject constructor(
     override suspend fun uploadItem(fileName: String, bytes: ByteArray, mimeType: String): Result<GraphDriveItem> = withContext(Dispatchers.IO) {
         val token = authManager.getAccessToken()
             ?: return@withContext Result.failure(IllegalStateException("Not authenticated"))
-        val mediaType = okhttp3.MediaType.parse(mimeType)
-        val body = okhttp3.RequestBody.create(mediaType, bytes)
+        val mediaType = mimeType.toMediaTypeOrNull()
+        val body = bytes.toRequestBody(mediaType)
         val url = "$GRAPH_BASE_URL/me/drive/root:/$fileName:/content"
         val request = Request.Builder()
             .url(url)

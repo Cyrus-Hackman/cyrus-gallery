@@ -41,9 +41,10 @@ class OneDriveViewModel @Inject constructor(
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
 
     init {
-        // Attempt silent session restoration on start
+        // Attempt silent session restoration on start.
+        // Wrap in runCatching so a placeholder/invalid MSAL config never crashes the app.
         viewModelScope.launch {
-            authManager.restoreSession()
+            runCatching { authManager.restoreSession() }
         }
     }
 

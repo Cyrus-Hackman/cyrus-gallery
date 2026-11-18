@@ -36,8 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cyrus.gallery.data.auth.AuthState
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.groupByMonth
@@ -47,7 +47,7 @@ import com.cyrus.gallery.ui.gallery.MediaGrid
 @Composable
 fun OneDriveScreen(
     onMediaClick: (MediaItem) -> Unit = {},
-    viewModel: OneDriveViewModel = viewModel(),
+    viewModel: OneDriveViewModel = hiltViewModel(),
 ) {
     val authState = viewModel.authState.collectAsStateWithLifecycle().value
     val cloudMedia = viewModel.cloudMedia.collectAsStateWithLifecycle().value

@@ -50,8 +50,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -66,7 +66,7 @@ import com.cyrus.gallery.domain.model.MediaType
 fun MediaViewerScreen(
     item: MediaItem,
     onBack: () -> Unit,
-    viewModel: MediaViewerViewModel = viewModel(),
+    viewModel: MediaViewerViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
     var controlsVisible by remember { mutableStateOf(true) }

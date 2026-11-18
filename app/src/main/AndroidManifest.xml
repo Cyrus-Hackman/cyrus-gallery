@@ -22,6 +22,7 @@
         android:allowBackup="true"
         android:label="Cyrus Gallery"
         android:supportsRtl="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.CyrusGallery">
         <activity
             android:name=".MainActivity"
@@ -42,7 +43,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="msauth"
-                    android:host="com.cyrus.gallery" />
+                    android:host="com.cyrus.gallery"
+                    android:path="/yzY7J5hPXj7sH4efdsdtGVJYKCY=" />
             </intent-filter>
         </activity>
 

@@ -21,8 +21,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.ui.components.EmptyLibraryState
 import com.cyrus.gallery.ui.permissions.MediaPermissionGate
@@ -31,7 +31,7 @@ import com.cyrus.gallery.ui.permissions.MediaPermissionGate
 fun PhotosScreen(
     onSettings: () -> Unit,
     onMediaClick: (MediaItem) -> Unit = {},
-    viewModel: GalleryViewModel = viewModel(),
+    viewModel: GalleryViewModel = hiltViewModel(),
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
 

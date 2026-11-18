@@ -38,8 +38,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.cyrus.gallery.domain.model.Album
 import com.cyrus.gallery.domain.model.MediaItem
@@ -52,8 +52,8 @@ import com.cyrus.gallery.ui.permissions.MediaPermissionGate
 @Composable
 fun AlbumsScreen(
     onMediaClick: (MediaItem) -> Unit = {},
-    viewModel: AlbumsViewModel = viewModel(),
-    galleryViewModel: GalleryViewModel = viewModel(),
+    viewModel: AlbumsViewModel = hiltViewModel(),
+    galleryViewModel: GalleryViewModel = hiltViewModel(),
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
     val galleryState = galleryViewModel.uiState.collectAsStateWithLifecycle().value

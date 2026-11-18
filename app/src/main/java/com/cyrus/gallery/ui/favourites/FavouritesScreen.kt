@@ -12,8 +12,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.groupByMonth
 import com.cyrus.gallery.ui.components.EmptyLibraryState
@@ -23,7 +23,7 @@ import com.cyrus.gallery.ui.gallery.MediaGrid
 @Composable
 fun FavouritesScreen(
     onMediaClick: (MediaItem) -> Unit = {},
-    viewModel: GalleryViewModel = viewModel(),
+    viewModel: GalleryViewModel = hiltViewModel(),
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
     val favoriteItems = state.rawMedia.filter { it.isFavourite }
