@@ -13,16 +13,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudQueue
-import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -43,6 +42,7 @@ import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.groupByMonth
 import com.cyrus.gallery.ui.components.EmptyLibraryState
 import com.cyrus.gallery.ui.gallery.MediaGrid
+import kotlinx.coroutines.delay
 
 @Composable
 fun OneDriveScreen(
@@ -51,10 +51,20 @@ fun OneDriveScreen(
 ) {
     val authState = viewModel.authState.collectAsStateWithLifecycle().value
     val cloudMedia = viewModel.cloudMedia.collectAsStateWithLifecycle().value
+    val isHydrating = viewModel.isHydrating.collectAsStateWithLifecycle().value
     val isSyncing = viewModel.isSyncing.collectAsStateWithLifecycle().value
     val statusMessage = viewModel.statusMessage.collectAsStateWithLifecycle().value
     val context = LocalContext.current
     val activity = context as? Activity
+    val gridState = rememberLazyGridState()
+
+    // Auto-dismiss sync status message after 3 seconds
+    LaunchedEffect(statusMessage, isSyncing) {
+        if (!statusMessage.isNullOrEmpty() && !isSyncing) {
+            delay(3_000)
+            viewModel.clearStatusMessage()
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         // Screen Header
@@ -117,7 +127,11 @@ fun OneDriveScreen(
                     onSignOut = { viewModel.signOut() },
                 )
 
-                if (cloudMedia.isEmpty()) {
+                if (isHydrating && cloudMedia.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else if (cloudMedia.isEmpty()) {
                     EmptyLibraryState(
                         icon = Icons.Outlined.CloudDone,
                         title = "OneDrive connected",
@@ -126,6 +140,7 @@ fun OneDriveScreen(
                 } else {
                     MediaGrid(
                         groups = cloudMedia.groupByMonth(),
+                        state = gridState,
                         modifier = Modifier.fillMaxSize(),
                         onMediaClick = onMediaClick,
                     )
@@ -229,18 +244,18 @@ private fun SignedInContent(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(accountName, style = MaterialTheme.typography.titleMedium)
+                Text(accountName, style = MaterialTheme.typography.titleSmall)
                 Text(
                     if (isSyncing) "Syncing..." else "$mediaCount items in cloud",
                     style = MaterialTheme.typography.bodySmall,
@@ -255,7 +270,7 @@ private fun SignedInContent(
                 }
             }
             OutlinedButton(onClick = onSignOut) {
-                Text("Sign out")
+                Text("Sign out", style = MaterialTheme.typography.labelMedium)
             }
         }
     }

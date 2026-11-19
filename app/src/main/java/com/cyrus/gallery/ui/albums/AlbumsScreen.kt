@@ -29,9 +29,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,7 +60,8 @@ fun AlbumsScreen(
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
     val galleryState = galleryViewModel.uiState.collectAsStateWithLifecycle().value
-    var selectedAlbum by remember { mutableStateOf<Album?>(null) }
+    var selectedAlbum by rememberSaveable { mutableStateOf<String?>(null) }
+    val currentAlbumObj = selectedAlbum?.let { id -> state.albums.find { it.id == id } }
 
     // Intercept phone's physical back button when inside an album
     BackHandler(enabled = selectedAlbum != null) {
@@ -66,8 +69,9 @@ fun AlbumsScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        val currentAlbum = selectedAlbum
+        val currentAlbum = currentAlbumObj
         if (currentAlbum != null) {
+            val albumGridState = rememberLazyGridState()
             // Album Detail Header
             Row(
                 modifier = Modifier
@@ -103,6 +107,7 @@ fun AlbumsScreen(
             } else {
                 MediaGrid(
                     groups = albumMedia.groupByMonth(),
+                    state = albumGridState,
                     modifier = Modifier.fillMaxSize(),
                     onMediaClick = onMediaClick,
                 )
@@ -143,7 +148,7 @@ fun AlbumsScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         items(state.albums, key = { it.id }) { album ->
-                            AlbumCard(album = album, onClick = { selectedAlbum = album })
+                            AlbumCard(album = album, onClick = { selectedAlbum = album.id })
                         }
                     }
                 }

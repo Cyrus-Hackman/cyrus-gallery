@@ -10,7 +10,6 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.cyrus.gallery.data.auth.OneDriveAuthManager
 import dagger.hilt.android.HiltAndroidApp
-import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import javax.inject.Inject
 
@@ -36,7 +35,7 @@ class CyrusGalleryApplication : Application(), Configuration.Provider, ImageLoad
                 if (host.contains("graph.microsoft.com")) {
                     val token = try {
                         if (::authManager.isInitialized) {
-                            runBlocking { authManager.getAccessToken() }
+                            authManager.cachedAccessToken
                         } else null
                     } catch (_: Exception) {
                         null

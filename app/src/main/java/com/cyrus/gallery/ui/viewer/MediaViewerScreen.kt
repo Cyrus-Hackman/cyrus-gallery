@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -56,7 +57,10 @@ import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import com.cyrus.gallery.domain.model.CloudStorageState
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.MediaSource
@@ -292,34 +296,43 @@ private fun ZoomableImagePage(
         }
     }
 
+    val lowResPainter = item.thumbnailUrl?.let { rememberAsyncImagePainter(it) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onToggleControls() },
-                    onDoubleTap = {
-                        if (scale > 1f) {
-                            scale = 1f
-                            offsetX = 0f
-                            offsetY = 0f
-                        } else {
-                            scale = 2.5f
+                coroutineScope {
+                    launch {
+                        detectTapGestures(
+                            onTap = { onToggleControls() },
+                            onDoubleTap = {
+                                if (scale > 1f) {
+                                    scale = 1f
+                                    offsetX = 0f
+                                    offsetY = 0f
+                                } else {
+                                    scale = 2.5f
+                                }
+                                onScaleChanged(scale)
+                            },
+                        )
+                    }
+                    launch {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            scale = (scale * zoom).coerceIn(1f, 5f)
+                            onScaleChanged(scale)
+                            if (scale > 1f) {
+                                // Clamp offset so the image cannot be dragged completely off-screen
+                                val maxOffsetX = size.width * (scale - 1f) / 2f
+                                val maxOffsetY = size.height * (scale - 1f) / 2f
+                                offsetX = (offsetX + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
+                                offsetY = (offsetY + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
+                            } else {
+                                offsetX = 0f
+                                offsetY = 0f
+                            }
                         }
-                        onScaleChanged(scale)
-                    },
-                )
-            }
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(1f, 5f)
-                    onScaleChanged(scale)
-                    if (scale > 1f) {
-                        offsetX += pan.x
-                        offsetY += pan.y
-                    } else {
-                        offsetX = 0f
-                        offsetY = 0f
                     }
                 }
             },
@@ -327,6 +340,8 @@ private fun ZoomableImagePage(
     ) {
         AsyncImage(
             model = item.localContentUri ?: item.highResUrl ?: item.thumbnailUrl,
+            placeholder = lowResPainter,
+            error = lowResPainter,
             contentDescription = item.displayName,
             contentScale = ContentScale.Fit,
             modifier = Modifier
@@ -348,12 +363,14 @@ private fun VideoPage(
     onToggleControls: () -> Unit,
 ) {
     val context = LocalContext.current
-    val mediaUri = item.localContentUri
+    var isStreamingRequested by remember(item.id) { mutableStateOf(false) }
+    val effectiveMediaUri = item.localContentUri
+        ?: (if (isStreamingRequested) item.highResUrl?.let { android.net.Uri.parse(it) } else null)
 
-    if (mediaUri != null) {
-        val exoPlayer = remember(mediaUri) {
+    if (effectiveMediaUri != null) {
+        val exoPlayer = remember(effectiveMediaUri) {
             ExoPlayer.Builder(context).build().apply {
-                setMediaItem(ExoMediaItem.fromUri(mediaUri))
+                setMediaItem(ExoMediaItem.fromUri(effectiveMediaUri))
                 prepare()
                 playWhenReady = isCurrentPage
             }
@@ -385,7 +402,7 @@ private fun VideoPage(
             )
         }
     } else {
-        // Cloud video preview if not downloaded
+        // High-quality cloud video preview with stream-on-demand support
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -395,17 +412,22 @@ private fun VideoPage(
             contentAlignment = Alignment.Center,
         ) {
             AsyncImage(
-                model = item.thumbnailUrl,
+                model = item.highResUrl ?: item.thumbnailUrl,
                 contentDescription = item.displayName,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize(),
             )
-            Icon(
-                imageVector = Icons.Outlined.CloudDownload,
-                contentDescription = "Cloud Video",
-                tint = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.size(64.dp),
-            )
+            IconButton(
+                onClick = { isStreamingRequested = true },
+                modifier = Modifier.size(80.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.PlayCircle,
+                    contentDescription = "Play Video",
+                    tint = Color.White.copy(alpha = 0.9f),
+                    modifier = Modifier.size(64.dp),
+                )
+            }
         }
     }
 }

@@ -1,19 +1,23 @@
 package com.cyrus.gallery.data.repository
 
+import android.content.Context
 import com.cyrus.gallery.data.database.CloudDownloadStatus
 import com.cyrus.gallery.data.database.CloudMediaCacheDao
 import com.cyrus.gallery.data.database.CloudMediaCacheEntity
 import com.cyrus.gallery.data.remote.graph.GraphDriveItem
 import com.cyrus.gallery.data.remote.graph.OneDriveGraphClient
+import com.cyrus.gallery.di.ApplicationScope
 import com.cyrus.gallery.domain.model.Album
 import com.cyrus.gallery.domain.model.CloudStorageState
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.MediaSource
 import com.cyrus.gallery.domain.model.MediaType
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -23,6 +27,8 @@ import javax.inject.Singleton
 class OneDriveRepository @Inject constructor(
     private val graphClient: OneDriveGraphClient,
     private val cacheDao: CloudMediaCacheDao,
+    @ApplicationContext private val context: Context,
+    @ApplicationScope private val appScope: CoroutineScope,
 ) {
     private val _cloudItems = MutableStateFlow<List<MediaItem>>(emptyList())
     val cloudItems: Flow<List<MediaItem>> = _cloudItems.asStateFlow()
@@ -30,31 +36,44 @@ class OneDriveRepository @Inject constructor(
     private val _cloudFolders = MutableStateFlow<List<Album>>(emptyList())
     val cloudFolders: Flow<List<Album>> = _cloudFolders.asStateFlow()
 
+    private val _isHydrating = MutableStateFlow(true)
+    val isHydrating: StateFlow<Boolean> = _isHydrating.asStateFlow()
+
+    private val prefs by lazy {
+        context.getSharedPreferences("onedrive_sync_prefs", Context.MODE_PRIVATE)
+    }
+
     private var currentDeltaLink: String? = null
 
     init {
-        // Hydrate from Room cache immediately on repository creation so cloud media
-        // is available instantly on app launch without needing to re-sync
-        CoroutineScope(Dispatchers.IO).launch {
-            val cachedEntities = cacheDao.getAll()
-            if (cachedEntities.isNotEmpty() && _cloudItems.value.isEmpty()) {
-                _cloudItems.value = cachedEntities.map { entity ->
-                    val isVideo = entity.mimeType.startsWith("video/")
-                    MediaItem(
-                        id = "onedrive:${entity.oneDriveItemId}",
-                        displayName = entity.fileName,
-                        type = if (isVideo) MediaType.VIDEO else MediaType.IMAGE,
-                        source = MediaSource.ONEDRIVE,
-                        mimeType = entity.mimeType,
-                        createdAt = entity.lastSynchronizedAtMillis?.let { java.time.Instant.ofEpochMilli(it) },
-                        modifiedAt = entity.lastSynchronizedAtMillis?.let { java.time.Instant.ofEpochMilli(it) },
-                        oneDriveItemId = entity.oneDriveItemId,
-                        thumbnailUrl = entity.thumbnailCachedPath
-                            ?: "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/thumbnails/0/large/content",
-                        highResUrl = "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/content",
-                        cloudStorageState = entity.storageState,
-                    )
+        // Restore delta token so sync continues incrementally across app restarts
+        currentDeltaLink = prefs.getString("delta_link", null)
+
+        // Hydrate from Room cache immediately on repository creation using structured appScope
+        appScope.launch(Dispatchers.IO) {
+            try {
+                val cachedEntities = cacheDao.getRecent(500)
+                if (cachedEntities.isNotEmpty() && _cloudItems.value.isEmpty()) {
+                    _cloudItems.value = cachedEntities.map { entity ->
+                        val isVideo = entity.mimeType.startsWith("video/")
+                        MediaItem(
+                            id = "onedrive:${entity.oneDriveItemId}",
+                            displayName = entity.fileName,
+                            type = if (isVideo) MediaType.VIDEO else MediaType.IMAGE,
+                            source = MediaSource.ONEDRIVE,
+                            mimeType = entity.mimeType,
+                            createdAt = entity.lastSynchronizedAtMillis?.let { java.time.Instant.ofEpochMilli(it) },
+                            modifiedAt = entity.lastSynchronizedAtMillis?.let { java.time.Instant.ofEpochMilli(it) },
+                            oneDriveItemId = entity.oneDriveItemId,
+                            thumbnailUrl = entity.thumbnailCachedPath
+                                ?: "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/thumbnails/0/large/content",
+                            highResUrl = "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/content",
+                            cloudStorageState = entity.storageState,
+                        )
+                    }
                 }
+            } finally {
+                _isHydrating.value = false
             }
         }
     }
@@ -70,6 +89,11 @@ class OneDriveRepository @Inject constructor(
         while (true) {
             val deltaResult = graphClient.getDelta(nextLinkOrToken)
             if (deltaResult.isFailure) {
+                val errorMsg = deltaResult.exceptionOrNull()?.message.orEmpty()
+                if (errorMsg.contains("resyncRequired") || errorMsg.contains("410") || errorMsg.contains("invalidRequest") || errorMsg.contains("badArgument") || errorMsg.contains("400")) {
+                    currentDeltaLink = null
+                    prefs.edit().remove("delta_link").apply()
+                }
                 return if (totalSynced > 0) {
                     Result.success(totalSynced)
                 } else {
@@ -150,11 +174,22 @@ class OneDriveRepository @Inject constructor(
             } else {
                 // Completed all pages; persist deltaLink for incremental updates
                 currentDeltaLink = result.deltaLink
+                if (!result.deltaLink.isNullOrEmpty()) {
+                    prefs.edit().putString("delta_link", result.deltaLink).apply()
+                }
                 break
             }
         }
 
         return Result.success(totalSynced)
+    }
+
+    /** Clears in-memory and persisted sync state on sign-out. */
+    fun clearSyncState() {
+        currentDeltaLink = null
+        prefs.edit().remove("delta_link").apply()
+        _cloudItems.value = emptyList()
+        _cloudFolders.value = emptyList()
     }
 
     /** Browse items within a specific OneDrive folder with pagination. */

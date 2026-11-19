@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.outlined.CloudQueue
@@ -29,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.request.videoFrameMillis
+import coil.size.Precision
 import com.cyrus.gallery.domain.model.CloudStorageState
 import com.cyrus.gallery.domain.model.MediaGroup
 import com.cyrus.gallery.domain.model.MediaItem
@@ -39,12 +42,14 @@ import com.cyrus.gallery.domain.model.MediaType
 fun MediaGrid(
     groups: List<MediaGroup>,
     modifier: Modifier = Modifier,
+    state: LazyGridState = rememberLazyGridState(),
     onMediaClick: ((MediaItem, List<MediaItem>) -> Unit)? = null,
 ) {
     val allItems = remember(groups) { groups.flatMap { it.items } }
 
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 112.dp),
+        state = state,
         modifier = modifier,
         contentPadding = PaddingValues(bottom = 8.dp),
     ) {
@@ -76,6 +81,7 @@ private fun MediaThumbnail(item: MediaItem, onClick: () -> Unit) {
             .data(item.localContentUri ?: item.thumbnailUrl)
             .crossfade(true)
             .size(480, 480)
+            .precision(Precision.INEXACT)
             .apply {
                 if (item.localContentUri != null && item.type == MediaType.VIDEO) {
                     videoFrameMillis(1000L)

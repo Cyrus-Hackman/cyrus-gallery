@@ -57,7 +57,9 @@ class OneDriveGraphClientImpl @Inject constructor(
 
     companion object {
         private const val GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
-        private const val SELECT_FIELDS =
+        private const val DELTA_SELECT_FIELDS =
+            "id,name,size,eTag,cTag,file,folder,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,parentReference"
+        private const val CHILDREN_SELECT_FIELDS =
             "id,name,size,eTag,cTag,file,folder,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,thumbnails,parentReference"
     }
 
@@ -88,21 +90,21 @@ class OneDriveGraphClientImpl @Inject constructor(
 
     override suspend fun getDriveRootChildren(nextLink: String?): Result<GraphPagedResult> {
         val url = nextLink
-            ?: "$GRAPH_BASE_URL/me/drive/root/children?\$select=$SELECT_FIELDS&\$top=100"
+            ?: "$GRAPH_BASE_URL/me/drive/root/children?\$select=$CHILDREN_SELECT_FIELDS&\$expand=thumbnails&\$top=100"
         return executeGet(url).map { parsePagedResult(it) }
     }
 
     override suspend fun getFolderChildren(folderId: String, nextLink: String?): Result<GraphPagedResult> {
         val url = nextLink
-            ?: "$GRAPH_BASE_URL/me/drive/items/$folderId/children?\$select=$SELECT_FIELDS&\$top=100"
+            ?: "$GRAPH_BASE_URL/me/drive/items/$folderId/children?\$select=$CHILDREN_SELECT_FIELDS&\$expand=thumbnails&\$top=100"
         return executeGet(url).map { parsePagedResult(it) }
     }
 
     override suspend fun getDelta(deltaLinkOrToken: String?): Result<GraphDeltaResult> {
         val url = when {
-            deltaLinkOrToken == null -> "$GRAPH_BASE_URL/me/drive/root/delta?\$select=$SELECT_FIELDS"
+            deltaLinkOrToken == null -> "$GRAPH_BASE_URL/me/drive/root/delta?\$select=$DELTA_SELECT_FIELDS"
             deltaLinkOrToken.startsWith("http") -> deltaLinkOrToken
-            else -> "$GRAPH_BASE_URL/me/drive/root/delta?token=$deltaLinkOrToken&\$select=$SELECT_FIELDS"
+            else -> "$GRAPH_BASE_URL/me/drive/root/delta?token=$deltaLinkOrToken&\$select=$DELTA_SELECT_FIELDS"
         }
         return executeGet(url).map { parseDeltaResult(it) }
     }
@@ -235,9 +237,9 @@ class OneDriveGraphClientImpl @Inject constructor(
         val parentRef = obj.optJSONObject("parentReference")
         val parentFolderId = parentRef?.optString("id")
 
-        // High-quality thumbnail: prefer 'large' 800px preview over 176px medium to prevent blur
+        // High-quality thumbnail: prefer expanded 'large' preview, then downloadUrl (for images), then Graph large thumbnail endpoint
         val effectiveThumbnailUrl = thumbnailUrl
-            ?: downloadUrl
+            ?: (if (isImage) downloadUrl else null)
             ?: "$GRAPH_BASE_URL/me/drive/items/$id/thumbnails/0/large/content"
 
         return GraphDriveItem(

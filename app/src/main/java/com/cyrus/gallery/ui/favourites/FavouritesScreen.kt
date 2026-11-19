@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.MaterialTheme
@@ -27,6 +28,7 @@ fun FavouritesScreen(
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
     val favoriteItems = state.rawMedia.filter { it.isFavourite }
+    val gridState = rememberLazyGridState()
 
     Column(Modifier.fillMaxSize()) {
         Column(
@@ -52,6 +54,7 @@ fun FavouritesScreen(
         } else {
             MediaGrid(
                 groups = favoriteItems.groupByMonth(),
+                state = gridState,
                 modifier = Modifier.fillMaxSize(),
                 onMediaClick = onMediaClick,
             )

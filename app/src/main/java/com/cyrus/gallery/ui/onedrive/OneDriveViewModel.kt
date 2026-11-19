@@ -34,6 +34,8 @@ class OneDriveViewModel @Inject constructor(
     val cloudMedia: StateFlow<List<MediaItem>> = oneDriveRepository.cloudItems
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val isHydrating: StateFlow<Boolean> = oneDriveRepository.isHydrating
+
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
@@ -44,7 +46,11 @@ class OneDriveViewModel @Inject constructor(
         // Attempt silent session restoration on start.
         // Wrap in runCatching so a placeholder/invalid MSAL config never crashes the app.
         viewModelScope.launch {
-            runCatching { authManager.restoreSession() }
+            val result = runCatching { authManager.restoreSession() }.getOrElse { Result.failure(it) }
+            if (result.isSuccess) {
+                // Session restored silently — perform an incremental sync to pick up changes
+                sync()
+            }
         }
     }
 
@@ -63,6 +69,7 @@ class OneDriveViewModel @Inject constructor(
     fun signOut() {
         viewModelScope.launch {
             authManager.signOut()
+            oneDriveRepository.clearSyncState()
             _statusMessage.value = "Signed out"
         }
     }
@@ -79,5 +86,9 @@ class OneDriveViewModel @Inject constructor(
                 _statusMessage.value = "Sync error: ${result.exceptionOrNull()?.message}"
             }
         }
+    }
+
+    fun clearStatusMessage() {
+        _statusMessage.value = null
     }
 }

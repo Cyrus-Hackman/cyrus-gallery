@@ -1,6 +1,7 @@
 package com.cyrus.gallery.ui.gallery
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,11 +9,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +38,7 @@ fun PhotosScreen(
     viewModel: GalleryViewModel = hiltViewModel(),
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
+    val gridState = rememberLazyGridState()
 
     // Close search on phone back gesture / button press instead of quitting app
     BackHandler(enabled = state.isSearchActive) {
@@ -95,7 +99,12 @@ fun PhotosScreen(
 
         // Permission gate wraps the grid
         MediaPermissionGate { hasPartialAccess ->
-            if (state.isLoading) return@MediaPermissionGate
+            if (state.isLoading) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+                return@MediaPermissionGate
+            }
             if (!state.hasMedia) {
                 EmptyLibraryState(
                     icon = Icons.Outlined.PhotoLibrary,
@@ -114,6 +123,7 @@ fun PhotosScreen(
             } else {
                 MediaGrid(
                     groups = state.groups,
+                    state = gridState,
                     modifier = Modifier.fillMaxSize(),
                     onMediaClick = onMediaClick,
                 )

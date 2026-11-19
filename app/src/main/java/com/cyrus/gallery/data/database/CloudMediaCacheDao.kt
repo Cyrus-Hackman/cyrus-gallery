@@ -27,6 +27,9 @@ interface CloudMediaCacheDao {
     @Query("SELECT * FROM cloud_media_cache")
     suspend fun getAll(): List<CloudMediaCacheEntity>
 
+    @Query("SELECT * FROM cloud_media_cache ORDER BY lastSynchronizedAtMillis DESC LIMIT :limit")
+    suspend fun getRecent(limit: Int = 500): List<CloudMediaCacheEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(item: CloudMediaCacheEntity)
 

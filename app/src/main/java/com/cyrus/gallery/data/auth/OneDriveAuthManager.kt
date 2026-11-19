@@ -28,6 +28,7 @@ sealed interface AuthState {
 
 interface OneDriveAuthManager {
     val authState: StateFlow<AuthState>
+    val cachedAccessToken: String?
     suspend fun restoreSession(): Result<String>
     suspend fun signIn(activity: Activity): Result<String>
     suspend fun signOut(): Result<Unit>
@@ -41,6 +42,10 @@ class OneDriveAuthManagerImpl @Inject constructor(
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.SignedOut())
     override val authState: StateFlow<AuthState> = _authState.asStateFlow()
+
+    @Volatile
+    override var cachedAccessToken: String? = null
+        private set
 
     private var clientApp: ISingleAccountPublicClientApplication? = null
     private var currentAccount: IAccount? = null
@@ -84,6 +89,7 @@ class OneDriveAuthManagerImpl @Inject constructor(
             app.getCurrentAccountAsync(object : ISingleAccountPublicClientApplication.CurrentAccountCallback {
                 override fun onAccountLoaded(activeAccount: IAccount?) {
                     if (activeAccount == null) {
+                        cachedAccessToken = null
                         _authState.value = AuthState.SignedOut()
                         continuation.resume(Result.failure(IllegalStateException("No active account")))
                         return
@@ -95,6 +101,7 @@ class OneDriveAuthManagerImpl @Inject constructor(
                         object : SilentAuthenticationCallback {
                             override fun onSuccess(result: IAuthenticationResult) {
                                 currentAccount = result.account
+                                cachedAccessToken = result.accessToken
                                 _authState.value = AuthState.SignedIn(
                                     displayName = result.account.username,
                                     accountId = result.account.id,
@@ -103,6 +110,7 @@ class OneDriveAuthManagerImpl @Inject constructor(
                             }
 
                             override fun onError(exception: MsalException) {
+                                cachedAccessToken = null
                                 _authState.value = AuthState.SignedOut(exception.message)
                                 continuation.resume(Result.failure(exception))
                             }
@@ -112,11 +120,13 @@ class OneDriveAuthManagerImpl @Inject constructor(
 
                 override fun onAccountChanged(priorAccount: IAccount?, currentAccount: IAccount?) {
                     if (currentAccount == null) {
+                        cachedAccessToken = null
                         _authState.value = AuthState.SignedOut()
                     }
                 }
 
                 override fun onError(exception: MsalException) {
+                    cachedAccessToken = null
                     _authState.value = AuthState.SignedOut(exception.message)
                     continuation.resume(Result.failure(exception))
                 }
@@ -138,6 +148,7 @@ class OneDriveAuthManagerImpl @Inject constructor(
             app.signIn(activity, "", scopes, object : AuthenticationCallback {
                 override fun onSuccess(result: IAuthenticationResult) {
                     currentAccount = result.account
+                    cachedAccessToken = result.accessToken
                     _authState.value = AuthState.SignedIn(
                         displayName = result.account.username,
                         accountId = result.account.id,
@@ -146,11 +157,13 @@ class OneDriveAuthManagerImpl @Inject constructor(
                 }
 
                 override fun onError(exception: MsalException) {
+                    cachedAccessToken = null
                     _authState.value = AuthState.SignedOut(exception.message)
                     continuation.resume(Result.failure(exception))
                 }
 
                 override fun onCancel() {
+                    cachedAccessToken = null
                     _authState.value = AuthState.SignedOut("Sign-in cancelled")
                     continuation.resume(Result.failure(Exception("Cancelled")))
                 }
@@ -164,6 +177,7 @@ class OneDriveAuthManagerImpl @Inject constructor(
             app.signOut(object : ISingleAccountPublicClientApplication.SignOutCallback {
                 override fun onSignOut() {
                     currentAccount = null
+                    cachedAccessToken = null
                     _authState.value = AuthState.SignedOut()
                     continuation.resume(Result.success(Unit))
                 }
@@ -186,6 +200,7 @@ class OneDriveAuthManagerImpl @Inject constructor(
                 object : SilentAuthenticationCallback {
                     override fun onSuccess(result: IAuthenticationResult) {
                         currentAccount = result.account
+                        cachedAccessToken = result.accessToken
                         continuation.resume(result.accessToken)
                     }
 
