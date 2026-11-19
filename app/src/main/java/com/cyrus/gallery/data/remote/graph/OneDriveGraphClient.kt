@@ -58,9 +58,9 @@ class OneDriveGraphClientImpl @Inject constructor(
     companion object {
         private const val GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
         private const val DELTA_SELECT_FIELDS =
-            "id,name,size,eTag,cTag,file,folder,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,parentReference"
+            "id,name,size,eTag,cTag,createdDateTime,lastModifiedDateTime,file,folder,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,parentReference"
         private const val CHILDREN_SELECT_FIELDS =
-            "id,name,size,eTag,cTag,file,folder,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,thumbnails,parentReference"
+            "id,name,size,eTag,cTag,createdDateTime,lastModifiedDateTime,file,folder,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,thumbnails,parentReference"
     }
 
     private suspend fun executeGet(url: String): Result<String> = withContext(Dispatchers.IO) {
@@ -208,17 +208,23 @@ class OneDriveGraphClientImpl @Inject constructor(
             else -> "application/octet-stream"
         }
 
-        // Extract best timestamp: photo.takenDateTime > fileSystemInfo.createdDateTime
+        // Extract best timestamp: photo.takenDateTime > fileSystemInfo.createdDateTime > createdDateTime > fileSystemInfo.lastModifiedDateTime > lastModifiedDateTime
         val photoObj = obj.optJSONObject("photo")
-        val takenTimeStr = photoObj?.optString("takenDateTime")
+        val takenTimeStr = photoObj?.optString("takenDateTime")?.takeIf { it.isNotBlank() }
         val fsObj = obj.optJSONObject("fileSystemInfo")
-        val createdTimeStr = fsObj?.optString("createdDateTime")
+        val fsCreatedStr = fsObj?.optString("createdDateTime")?.takeIf { it.isNotBlank() }
+        val topCreatedStr = obj.optString("createdDateTime").takeIf { it.isNotBlank() }
+        val fsModifiedStr = fsObj?.optString("lastModifiedDateTime")?.takeIf { it.isNotBlank() }
+        val topModifiedStr = obj.optString("lastModifiedDateTime").takeIf { it.isNotBlank() }
+
+        val bestTimestampStr = takenTimeStr
+            ?: fsCreatedStr
+            ?: topCreatedStr
+            ?: fsModifiedStr
+            ?: topModifiedStr
+
         val createdAt = try {
-            when {
-                !takenTimeStr.isNullOrEmpty() -> Instant.parse(takenTimeStr)
-                !createdTimeStr.isNullOrEmpty() -> Instant.parse(createdTimeStr)
-                else -> null
-            }
+            bestTimestampStr?.let { Instant.parse(it) }
         } catch (_: Exception) {
             null
         }

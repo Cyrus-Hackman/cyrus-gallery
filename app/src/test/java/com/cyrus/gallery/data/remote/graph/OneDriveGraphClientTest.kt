@@ -55,6 +55,40 @@ class OneDriveGraphClientTest {
     }
 
     @Test
+    fun `graph item timestamp falls back through createdDateTime and lastModifiedDateTime`() {
+        val sampleJson = """
+        {
+            "id": "video789",
+            "name": "ScreenRecording.mp4",
+            "size": 5000000,
+            "video": {},
+            "file": { "mimeType": "video/mp4" },
+            "createdDateTime": "2024-03-10T12:00:00Z",
+            "lastModifiedDateTime": "2024-03-10T14:30:00Z"
+        }
+        """.trimIndent()
+
+        val obj = JSONObject(sampleJson)
+        val photoObj = obj.optJSONObject("photo")
+        val takenTimeStr = photoObj?.optString("takenDateTime")?.takeIf { it.isNotBlank() }
+        val fsObj = obj.optJSONObject("fileSystemInfo")
+        val fsCreatedStr = fsObj?.optString("createdDateTime")?.takeIf { it.isNotBlank() }
+        val topCreatedStr = obj.optString("createdDateTime").takeIf { it.isNotBlank() }
+        val fsModifiedStr = fsObj?.optString("lastModifiedDateTime")?.takeIf { it.isNotBlank() }
+        val topModifiedStr = obj.optString("lastModifiedDateTime").takeIf { it.isNotBlank() }
+
+        val bestTimestampStr = takenTimeStr
+            ?: fsCreatedStr
+            ?: topCreatedStr
+            ?: fsModifiedStr
+            ?: topModifiedStr
+
+        val instant = bestTimestampStr?.let { Instant.parse(it) }
+        assertNotNull(instant)
+        assertEquals(Instant.parse("2024-03-10T12:00:00Z"), instant)
+    }
+
+    @Test
     fun `graph delta payload separates additions and deletions`() {
         val deltaJson = """
         {

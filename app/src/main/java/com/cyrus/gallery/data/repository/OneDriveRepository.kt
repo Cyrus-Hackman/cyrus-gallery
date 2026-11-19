@@ -56,21 +56,22 @@ class OneDriveRepository @Inject constructor(
                 if (cachedEntities.isNotEmpty() && _cloudItems.value.isEmpty()) {
                     _cloudItems.value = cachedEntities.map { entity ->
                         val isVideo = entity.mimeType.startsWith("video/")
+                        val itemDate = (entity.createdAtMillis ?: entity.lastSynchronizedAtMillis)?.let { java.time.Instant.ofEpochMilli(it) }
                         MediaItem(
                             id = "onedrive:${entity.oneDriveItemId}",
                             displayName = entity.fileName,
                             type = if (isVideo) MediaType.VIDEO else MediaType.IMAGE,
                             source = MediaSource.ONEDRIVE,
                             mimeType = entity.mimeType,
-                            createdAt = entity.lastSynchronizedAtMillis?.let { java.time.Instant.ofEpochMilli(it) },
-                            modifiedAt = entity.lastSynchronizedAtMillis?.let { java.time.Instant.ofEpochMilli(it) },
+                            createdAt = itemDate,
+                            modifiedAt = itemDate,
                             oneDriveItemId = entity.oneDriveItemId,
                             thumbnailUrl = entity.thumbnailCachedPath
                                 ?: "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/thumbnails/0/large/content",
                             highResUrl = "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/content",
                             cloudStorageState = entity.storageState,
                         )
-                    }
+                    }.sortedByDescending { it.createdAt ?: java.time.Instant.EPOCH }
                 }
             } finally {
                 _isHydrating.value = false
@@ -134,7 +135,7 @@ class OneDriveRepository @Inject constructor(
                     )
                     newMedia.add(mediaItem)
 
-                    // Record in Room cache entity with thumbnail path
+                    // Record in Room cache entity with thumbnail path and accurate creation timestamp
                     cacheDao.upsert(
                         CloudMediaCacheEntity(
                             cacheId = "onedrive_${item.id}",
@@ -148,6 +149,7 @@ class OneDriveRepository @Inject constructor(
                             downloadStatus = CloudDownloadStatus.NOT_DOWNLOADED,
                             eTag = item.eTag,
                             cTag = item.cTag,
+                            createdAtMillis = item.createdAt?.toEpochMilli(),
                             lastSynchronizedAtMillis = System.currentTimeMillis(),
                         ),
                     )
@@ -215,7 +217,7 @@ class OneDriveRepository @Inject constructor(
                     cloudStorageState = CloudStorageState.REMOTE_ONLY,
                     albumId = folderId,
                 )
-            }
+            }.sortedByDescending { it.createdAt ?: java.time.Instant.EPOCH }
         return Result.success(media)
     }
 

@@ -22,6 +22,7 @@ data class CloudMediaCacheEntity(
     val downloadedAtMillis: Long? = null,
     val lastAccessedAtMillis: Long? = null,
     val lastSynchronizedAtMillis: Long? = null,
+    val createdAtMillis: Long? = null,
     val eTag: String? = null,
     val cTag: String? = null,
     val cacheExpiresAtMillis: Long? = null,
