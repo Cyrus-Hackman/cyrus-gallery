@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -103,11 +104,13 @@ fun CyrusGalleryApp() {
 
         // Fullscreen Image/Video Viewer overlaid on top without disposing the grid
         if (activeState != null && activeState.first.isNotEmpty()) {
-            MediaViewerScreen(
-                items = activeState.first,
-                initialIndex = activeState.second,
-                onBack = onDismissViewer,
-            )
+            key(activeState.first.getOrNull(activeState.second)?.id ?: activeState.second) {
+                MediaViewerScreen(
+                    items = activeState.first,
+                    initialIndex = activeState.second,
+                    onBack = onDismissViewer,
+                )
+            }
         }
     }
 }

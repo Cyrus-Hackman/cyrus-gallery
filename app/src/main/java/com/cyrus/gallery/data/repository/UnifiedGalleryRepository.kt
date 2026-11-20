@@ -81,8 +81,16 @@ class UnifiedGalleryRepository @Inject constructor(
         return combine(
             localRepository.observeAlbums(),
             oneDriveRepository.cloudFolders,
-        ) { localAlbums, cloudFolders ->
-            localAlbums + cloudFolders
+            oneDriveRepository.cloudItems,
+        ) { localAlbums, cloudFolders, cloudItems ->
+            val cloudItemCounts = cloudItems.groupingBy { it.albumId }.eachCount()
+            val enrichedCloudFolders = cloudFolders.map { folder ->
+                val count = cloudItemCounts[folder.id] ?: folder.itemCount
+                val cover = cloudItems.firstOrNull { it.albumId == folder.id }?.thumbnailUrl
+                    ?: folder.coverThumbnailUrl
+                folder.copy(itemCount = count, coverThumbnailUrl = cover)
+            }
+            localAlbums + enrichedCloudFolders
         }
     }
 

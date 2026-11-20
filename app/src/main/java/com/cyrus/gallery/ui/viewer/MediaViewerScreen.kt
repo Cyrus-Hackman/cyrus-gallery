@@ -52,6 +52,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.exoplayer.ExoPlayer
@@ -103,6 +105,7 @@ fun MediaViewerScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     val statusMessage by viewModel.statusMessage.collectAsStateWithLifecycle()
+    val favoriteIds by viewModel.favoriteIds.collectAsStateWithLifecycle()
 
     LaunchedEffect(statusMessage) {
         statusMessage?.let {
@@ -207,11 +210,12 @@ fun MediaViewerScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 // Favorite Toggle
+                val isFav = currentItem.id in favoriteIds || currentItem.isFavourite
                 IconButton(onClick = { viewModel.toggleFavorite(currentItem) }) {
                     Icon(
-                        if (currentItem.isFavourite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                        if (isFav) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                         contentDescription = "Favorite",
-                        tint = if (currentItem.isFavourite) Color.Red else Color.White,
+                        tint = if (isFav) Color.Red else Color.White,
                     )
                 }
 
@@ -382,6 +386,10 @@ private fun VideoPage(
 
         DisposableEffect(exoPlayer) {
             onDispose { exoPlayer.release() }
+        }
+
+        LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) {
+            exoPlayer.pause()
         }
 
         Box(

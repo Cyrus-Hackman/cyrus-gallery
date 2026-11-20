@@ -8,10 +8,14 @@ import com.cyrus.gallery.domain.model.CloudStorageState
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.repository.CloudCacheRepository
 import com.cyrus.gallery.domain.repository.GalleryRepository
+import com.cyrus.gallery.data.database.FavoriteMediaDao
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -21,14 +25,20 @@ class MediaViewerViewModel @Inject constructor(
     private val cacheRepository: CloudCacheRepository,
     private val syncManager: OneDriveSyncManager,
     private val storageManager: PrivateStorageManager,
+    private val favoriteDao: FavoriteMediaDao,
 ) : ViewModel() {
 
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
 
+    val favoriteIds: StateFlow<Set<String>> = favoriteDao.observeFavoriteIds()
+        .map { it.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
     fun toggleFavorite(item: MediaItem) {
         viewModelScope.launch {
-            repository.setFavorite(item.id, !item.isFavourite)
+            val isFav = item.id in favoriteIds.value || item.isFavourite
+            repository.setFavorite(item.id, !isFav)
         }
     }
 

@@ -70,6 +70,7 @@ class OneDriveRepository @Inject constructor(
                                 ?: "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/thumbnails/0/large/content",
                             highResUrl = "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/content",
                             cloudStorageState = entity.storageState,
+                            albumId = entity.driveId.takeIf { it != "root" },
                         )
                     }.sortedByDescending { it.createdAt ?: java.time.Instant.EPOCH }
                 }
@@ -132,6 +133,7 @@ class OneDriveRepository @Inject constructor(
                         thumbnailUrl = item.thumbnailUrl,
                         highResUrl = item.downloadUrl ?: "https://graph.microsoft.com/v1.0/me/drive/items/${item.id}/content",
                         cloudStorageState = CloudStorageState.REMOTE_ONLY,
+                        albumId = item.parentFolderId,
                     )
                     newMedia.add(mediaItem)
 
