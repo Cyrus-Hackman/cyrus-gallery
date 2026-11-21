@@ -178,7 +178,8 @@ class OneDriveGraphClientImpl @Inject constructor(
 
         for (i in 0 until valueArray.length()) {
             val obj = valueArray.getJSONObject(i)
-            if (obj.has("deleted")) {
+            val isDeleted = obj.has("deleted") || obj.has("@removed")
+            if (isDeleted) {
                 deletedIds.add(obj.optString("id"))
             } else {
                 parseDriveItem(obj)?.let { items.add(it) }
@@ -197,13 +198,35 @@ class OneDriveGraphClientImpl @Inject constructor(
         val eTag = obj.optString("eTag").takeIf { it.isNotEmpty() }
         val cTag = obj.optString("cTag").takeIf { it.isNotEmpty() }
         val isFolder = obj.has("folder")
-        val isImage = obj.has("image")
-        val isVideo = obj.has("video")
 
         val fileObj = obj.optJSONObject("file")
-        val mimeType = fileObj?.optString("mimeType") ?: when {
-            isImage -> "image/*"
-            isVideo -> "video/*"
+        val rawMimeType = fileObj?.optString("mimeType")
+
+        val ext = name.substringAfterLast('.', "").lowercase()
+        val isImageExtension = ext in setOf(
+            "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "bmp", "dng", "cr2", "nef", "arw", "tif", "tiff"
+        )
+        val isVideoExtension = ext in setOf(
+            "mp4", "mov", "m4v", "mkv", "webm", "3gp", "avi", "wmv", "flv", "ts", "mts"
+        )
+
+        // Comprehensive media classification: check facets, MIME types, and file extensions
+        val isImage = !isFolder && (
+            obj.has("image") ||
+            obj.has("photo") ||
+            rawMimeType?.startsWith("image/") == true ||
+            isImageExtension
+        )
+
+        val isVideo = !isFolder && !isImage && (
+            obj.has("video") ||
+            rawMimeType?.startsWith("video/") == true ||
+            isVideoExtension
+        )
+
+        val mimeType = rawMimeType ?: when {
+            isImage -> if (ext.isNotEmpty()) "image/$ext" else "image/jpeg"
+            isVideo -> if (ext.isNotEmpty()) "video/$ext" else "video/mp4"
             isFolder -> "vnd.android.cursor.item/directory"
             else -> "application/octet-stream"
         }

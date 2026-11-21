@@ -74,11 +74,13 @@ class OneDriveViewModel @Inject constructor(
         }
     }
 
-    fun sync() {
+    fun sync(forceFullSync: Boolean = false) {
         viewModelScope.launch {
             _isSyncing.value = true
             _statusMessage.value = "Syncing media from OneDrive..."
-            val result = oneDriveRepository.performDeltaSync()
+            // If the library currently has 4 or fewer items, automatically trigger a full re-sync
+            val shouldForceFull = forceFullSync || cloudMedia.value.size <= 4
+            val result = oneDriveRepository.performDeltaSync(forceFullSync = shouldForceFull)
             _isSyncing.value = false
             if (result.isSuccess) {
                 _statusMessage.value = "Synchronized ${result.getOrNull()} items"

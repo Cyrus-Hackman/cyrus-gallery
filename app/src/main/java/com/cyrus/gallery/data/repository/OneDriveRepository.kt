@@ -83,8 +83,14 @@ class OneDriveRepository @Inject constructor(
     /**
      * Performs a complete delta sync, following all paged nextLinks in a loop so the
      * full OneDrive library is discovered in a single sync operation.
+     *
+     * @param forceFullSync If true, ignores the saved delta cursor and re-scans the full drive from root.
      */
-    suspend fun performDeltaSync(): Result<Int> {
+    suspend fun performDeltaSync(forceFullSync: Boolean = false): Result<Int> {
+        if (forceFullSync) {
+            currentDeltaLink = null
+            prefs.edit().remove("delta_link").apply()
+        }
         var nextLinkOrToken = currentDeltaLink
         var totalSynced = 0
 

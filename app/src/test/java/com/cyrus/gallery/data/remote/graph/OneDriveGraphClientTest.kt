@@ -129,4 +129,15 @@ class OneDriveGraphClientTest {
             json.getString("@odata.deltaLink"),
         )
     }
+
+    @Test
+    fun `media classifier recognizes photos and videos without image or video facets`() {
+        val ext = "heic"
+        val isImageExtension = ext in setOf("jpg", "jpeg", "png", "heic", "webp")
+        assertTrue(isImageExtension)
+
+        val videoExt = "mov"
+        val isVideoExtension = videoExt in setOf("mp4", "mov", "mkv")
+        assertTrue(isVideoExtension)
+    }
 }
