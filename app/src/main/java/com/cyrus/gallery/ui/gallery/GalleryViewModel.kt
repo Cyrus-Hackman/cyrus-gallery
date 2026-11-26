@@ -54,6 +54,9 @@ class GalleryViewModel @Inject constructor(repository: GalleryRepository) : View
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GalleryUiState())
 
+    val favoriteMedia: StateFlow<List<MediaItem>> = repository.observeFavoriteMedia()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     fun setSearchActive(active: Boolean) {
         _isSearchActive.value = active
         if (!active) _searchQuery.value = ""

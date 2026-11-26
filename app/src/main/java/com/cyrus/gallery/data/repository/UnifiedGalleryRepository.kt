@@ -39,23 +39,25 @@ class UnifiedGalleryRepository @Inject constructor(
         ) { localItems, cloudItems, cachedEntities, favoriteIds ->
             val favSet = favoriteIds.toSet()
             val enrichedCloudItems = enrichCloudItems(cloudItems, cachedEntities, favSet)
+            mergeUnifiedMedia(localItems, enrichedCloudItems, favSet)
+        }
+    }
 
-            // Deduplicate local vs cloud copies of the exact same media
-            val localNameSet = localItems.map { it.displayName.lowercase() }.toSet()
-
-            val enrichedLocalItems = localItems.map { localItem ->
-                localItem.copy(isFavourite = localItem.id in favSet)
-            }
-
-            // Keep all local items, plus cloud-only items that do not duplicate a local original
-            val distinctCloudItems = enrichedCloudItems.filter { cloudItem ->
-                cloudItem.displayName.lowercase() !in localNameSet
-            }
-
-            // Merge into unified newest-first stream
-            (enrichedLocalItems + distinctCloudItems).sortedByDescending {
-                it.createdAt ?: it.modifiedAt ?: java.time.Instant.EPOCH
-            }
+    override fun observeFavoriteMedia(): Flow<List<MediaItem>> {
+        return combine(
+            localRepository.observeMedia(),
+            oneDriveRepository.cloudItems,
+            cacheDao.observeAll(),
+            favoriteDao.observeFavoriteIds(),
+        ) { localItems, cloudItems, cachedEntities, favoriteIds ->
+            val favSet = favoriteIds.toSet()
+            if (favSet.isEmpty()) return@combine emptyList()
+            val favCloud = enrichCloudItems(
+                cloudItems.filter { it.id in favSet },
+                cachedEntities,
+                favSet,
+            )
+            buildFavoriteMedia(localItems, favCloud, favSet)
         }
     }
 

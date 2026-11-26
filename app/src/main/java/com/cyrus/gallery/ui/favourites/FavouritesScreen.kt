@@ -35,8 +35,7 @@ fun FavouritesScreen(
     tabReselected: Flow<String> = emptyFlow(),
     viewModel: GalleryViewModel = hiltViewModel(),
 ) {
-    val state = viewModel.uiState.collectAsStateWithLifecycle().value
-    val favoriteItems = state.rawMedia.filter { it.isFavourite }
+    val favoriteItems = viewModel.favoriteMedia.collectAsStateWithLifecycle().value
     val gridState = rememberLazyGridState()
 
     LaunchedEffect(tabReselected, gridState) {

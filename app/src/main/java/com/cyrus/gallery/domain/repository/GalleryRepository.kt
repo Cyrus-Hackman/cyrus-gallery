@@ -4,10 +4,15 @@ import com.cyrus.gallery.domain.model.Album
 import com.cyrus.gallery.domain.model.MediaItem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 
 interface GalleryRepository {
     /** Emits one unified, newest-first library without retaining originals in memory. */
     fun observeMedia(): Flow<List<MediaItem>>
+
+    /** Emits all favorited items across local and cloud sources (without local filename deduplication). */
+    fun observeFavoriteMedia(): Flow<List<MediaItem>> =
+        observeMedia().map { items -> items.filter { it.isFavourite } }
 
     /** Emits enriched OneDrive-only media (without local filename deduplication), newest-first. */
     fun observeCloudMedia(): Flow<List<MediaItem>> = flowOf(emptyList())
