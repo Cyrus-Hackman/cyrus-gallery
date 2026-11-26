@@ -79,6 +79,7 @@ fun CyrusGalleryApp() {
         viewerSearchQuery = config.searchQuery
         viewerAlbumId = config.albumId
         viewerAlbumName = config.albumName
+        viewerRootFolderOnly = config.rootFolderOnly
         viewerInitialItems = config.initialItems
         viewerSessionSeq++
     }
@@ -90,6 +91,7 @@ fun CyrusGalleryApp() {
         viewerSearchQuery = ""
         viewerAlbumId = null
         viewerAlbumName = null
+        viewerRootFolderOnly = false
         viewerInitialItems = emptyList()
         if (current != routeToRestore) {
             navigateToTab(routeToRestore)

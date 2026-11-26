@@ -43,6 +43,7 @@ data class ViewerSessionConfig(
     val searchQuery: String = "",
     val albumId: String? = null,
     val albumName: String? = null,
+    val rootFolderOnly: Boolean = false,
     val initialItems: List<MediaItem> = emptyList(),
 )
 
