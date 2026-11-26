@@ -1,14 +1,14 @@
 package com.cyrus.gallery.data.repository
 
+import android.app.RecoverableSecurityException
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Context
+import android.content.IntentSender
 import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.provider.MediaStore
 import com.cyrus.gallery.domain.model.Album
 import com.cyrus.gallery.domain.model.MediaItem
@@ -26,6 +26,12 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** Signals UI to launch Android's system delete confirmation dialog on API 29+. */
+class MediaDeletePermissionRequiredException(
+    val intentSender: IntentSender,
+    val requiresManualRetryAfterGrant: Boolean,
+) : Exception("User confirmation required to delete device media")
 
 @Singleton
 class LocalGalleryRepository @Inject constructor(
@@ -75,8 +81,25 @@ class LocalGalleryRepository @Inject constructor(
 
     override suspend fun deleteLocalMedia(mediaItem: MediaItem): Result<Unit> = runCatching {
         val uri = mediaItem.localContentUri ?: throw IllegalArgumentException("No local URI for media")
-        val deleted = context.contentResolver.delete(uri, null, null)
-        if (deleted <= 0) throw IllegalStateException("Could not delete item")
+        try {
+            val deleted = context.contentResolver.delete(uri, null, null)
+            if (deleted <= 0) throw IllegalStateException("Could not delete item")
+        } catch (se: SecurityException) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val pendingIntent = MediaStore.createDeleteRequest(context.contentResolver, listOf(uri))
+                throw MediaDeletePermissionRequiredException(
+                    intentSender = pendingIntent.intentSender,
+                    requiresManualRetryAfterGrant = false,
+                )
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && se is RecoverableSecurityException) {
+                throw MediaDeletePermissionRequiredException(
+                    intentSender = se.userAction.actionIntent.intentSender,
+                    requiresManualRetryAfterGrant = true,
+                )
+            } else {
+                throw se
+            }
+        }
     }
 
     override suspend fun deleteCloudMedia(mediaItem: MediaItem): Result<Unit> =
@@ -108,14 +131,18 @@ class LocalGalleryRepository @Inject constructor(
         val items = mutableListOf<MediaItem>()
         val sortOrder = "${MediaStore.MediaColumns.DATE_TAKEN} DESC, ${MediaStore.MediaColumns.DATE_ADDED} DESC"
 
-        val cursor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val queryArgs = Bundle().apply {
-                putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
-                putInt(ContentResolver.QUERY_ARG_LIMIT, 5000)
+        val cursor = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val queryArgs = Bundle().apply {
+                    putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
+                    putInt(ContentResolver.QUERY_ARG_LIMIT, 5000)
+                }
+                resolver.query(collectionUri, projection, queryArgs, null)
+            } else {
+                resolver.query(collectionUri, projection, null, null, sortOrder)
             }
-            resolver.query(collectionUri, projection, queryArgs, null)
-        } else {
-            resolver.query(collectionUri, projection, null, null, sortOrder)
+        } catch (_: SecurityException) {
+            null
         } ?: return emptyList()
 
         cursor.use {

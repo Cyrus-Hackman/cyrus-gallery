@@ -2,6 +2,7 @@ package com.cyrus.gallery.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.cyrus.gallery.data.cache.CloudPolicyPreferences
 import com.cyrus.gallery.data.sync.OneDriveSyncManager
 import com.cyrus.gallery.domain.model.AutomaticDownloadMode
 import com.cyrus.gallery.domain.model.CloudCachePolicy
@@ -21,13 +22,13 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val cacheRepository: CloudCacheRepository,
     private val syncManager: OneDriveSyncManager,
+    private val policyPreferences: CloudPolicyPreferences,
 ) : ViewModel() {
 
     val storageSummary: StateFlow<CloudCacheStorageSummary> = cacheRepository.observeStorageSummary()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CloudCacheStorageSummary())
 
-    private val _policy = MutableStateFlow(CloudCachePolicy())
-    val policy: StateFlow<CloudCachePolicy> = _policy.asStateFlow()
+    val policy: StateFlow<CloudCachePolicy> = policyPreferences.policy
 
     private val _actionMessage = MutableStateFlow<String?>(null)
     val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
@@ -41,13 +42,12 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun updateNetworkMode(mode: SyncNetworkMode) {
-        val updated = _policy.value.copy(networkMode = mode)
-        _policy.value = updated
-        syncManager.schedulePeriodicSync(updated)
+        policyPreferences.updateNetworkMode(mode)
+        syncManager.schedulePeriodicSync(policyPreferences.policy.value)
     }
 
     fun updateDownloadMode(mode: AutomaticDownloadMode) {
-        _policy.value = _policy.value.copy(automaticDownload = mode)
+        policyPreferences.updateDownloadMode(mode)
     }
 
     fun clearActionMessage() {

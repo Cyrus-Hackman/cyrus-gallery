@@ -6,18 +6,23 @@ import android.Manifest
 import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,22 +72,64 @@ fun hasMediaAccess(state: MultiplePermissionsState): Boolean {
 }
 
 @Composable
-fun MediaPermissionGate(content: @Composable (hasPartialAccess: Boolean) -> Unit) {
+fun MediaPermissionGate(
+    allowCloudWhenDenied: Boolean = false,
+    content: @Composable (hasPartialAccess: Boolean) -> Unit,
+) {
     val permissions = requiredMediaPermissions()
     val state = rememberMultiplePermissionsState(permissions)
 
     when {
         hasMediaAccess(state) -> {
             val isPartial = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-                    !state.permissions
-                        .filter { it.permission != Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED }
-                        .all { it.status.isGranted }
+                !state.permissions
+                    .filter { it.permission != Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED }
+                    .all { it.status.isGranted }
             content(isPartial)
+        }
+        allowCloudWhenDenied -> {
+            Column(modifier = Modifier.fillMaxSize()) {
+                LocalPermissionBanner(onRequest = { state.launchMultiplePermissionRequest() })
+                content(false)
+            }
         }
         state.permissions.any { it.status.shouldShowRationale } ->
             PermissionRationaleScreen(onRequest = { state.launchMultiplePermissionRequest() })
         else ->
             PermissionRequestScreen(onRequest = { state.launchMultiplePermissionRequest() })
+    }
+}
+
+@Composable
+private fun LocalPermissionBanner(onRequest: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Outlined.PhotoLibrary,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = "Allow device photo access to mix local media here.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onRequest) {
+                Text("Allow", style = MaterialTheme.typography.labelMedium)
+            }
+        }
     }
 }
 

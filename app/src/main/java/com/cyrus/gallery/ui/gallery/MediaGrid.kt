@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.outlined.CloudQueue
@@ -25,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -107,16 +109,22 @@ private fun MediaThumbnail(item: MediaItem, onClick: () -> Unit) {
             modifier = Modifier.matchParentSize(),
         )
 
-        // Video overlay badge
+        // Video overlay badge with subtle dark backdrop so it remains crisp on bright photos
         if (item.type == MediaType.VIDEO) {
-            Icon(
-                imageVector = Icons.Outlined.PlayCircle,
-                contentDescription = "Video",
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+            Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(6.dp),
-            )
+                    .padding(6.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .padding(2.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.PlayCircle,
+                    contentDescription = "Video",
+                    tint = Color.White,
+                )
+            }
         }
 
         // Cloud indicator badge

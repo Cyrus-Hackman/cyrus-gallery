@@ -68,6 +68,8 @@ class OneDriveGraphClientImpl @Inject constructor(
 
     companion object {
         private const val GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+        private const val SIMPLE_UPLOAD_MAX_BYTES = 4L * 1024 * 1024
+        private const val UPLOAD_CHUNK_BYTES = 320 * 1024 * 10 // 3.2 MB (multiple of 320 KiB per Graph upload session spec)
         private const val DELTA_SELECT_FIELDS =
             "id,name,size,eTag,cTag,createdDateTime,lastModifiedDateTime,file,folder,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,parentReference"
         private const val CHILDREN_SELECT_FIELDS =
@@ -141,26 +143,142 @@ class OneDriveGraphClientImpl @Inject constructor(
         }
     }
 
-    override suspend fun uploadItem(fileName: String, bytes: ByteArray, mimeType: String): Result<GraphDriveItem> = withContext(Dispatchers.IO) {
+    override suspend fun uploadItem(fileName: String, bytes: ByteArray, mimeType: String): Result<GraphDriveItem> =
+        uploadStream(fileName, bytes.size.toLong(), mimeType) { ByteArrayInputStream(bytes) }
+
+    override suspend fun uploadStream(
+        fileName: String,
+        contentLength: Long,
+        mimeType: String,
+        openStream: () -> InputStream?,
+    ): Result<GraphDriveItem> = withContext(Dispatchers.IO) {
         val token = authManager.getAccessToken()
             ?: return@withContext Result.failure(IllegalStateException("Not authenticated"))
+        val encodedName = Uri.encode(fileName)
+
+        // Resolve exact byte size without loading into RAM when caller didn't know contentLength
+        val totalBytes = if (contentLength > 0L) contentLength else {
+            val probe = openStream() ?: return@withContext Result.failure(IOException("Could not open upload stream"))
+            probe.use { input ->
+                val buf = ByteArray(16 * 1024)
+                var total = 0L
+                while (true) {
+                    val r = input.read(buf)
+                    if (r == -1) break
+                    total += r
+                }
+                total
+            }
+        }
+
+        if (totalBytes <= SIMPLE_UPLOAD_MAX_BYTES) {
+            return@withContext executeSimpleUpload(encodedName, token, mimeType, totalBytes, openStream)
+        }
+        executeChunkedUpload(encodedName, token, totalBytes, openStream)
+    }
+
+    private fun executeSimpleUpload(
+        encodedName: String,
+        token: String,
+        mimeType: String,
+        totalBytes: Long,
+        openStream: () -> InputStream?,
+    ): Result<GraphDriveItem> {
         val mediaType = mimeType.toMediaTypeOrNull()
-        val body = bytes.toRequestBody(mediaType)
-        val url = "$GRAPH_BASE_URL/me/drive/root:/$fileName:/content"
+        val body = object : RequestBody() {
+            override fun contentType() = mediaType
+            override fun contentLength() = totalBytes
+            override fun writeTo(sink: BufferedSink) {
+                val stream = openStream() ?: throw IOException("Could not open upload stream")
+                stream.use { input ->
+                    val buffer = ByteArray(16 * 1024)
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        sink.write(buffer, 0, read)
+                    }
+                }
+            }
+        }
         val request = Request.Builder()
-            .url(url)
+            .url("$GRAPH_BASE_URL/me/drive/root:/$encodedName:/content")
             .put(body)
             .addHeader("Authorization", "Bearer $token")
             .build()
-        try {
+        return try {
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(IOException("Graph upload failed: ${response.code} ${response.message}"))
+                    return Result.failure(IOException("Graph upload failed: ${response.code} ${response.message}"))
                 }
                 val bodyStr = response.body?.string() ?: ""
                 val driveItem = parseDriveItem(JSONObject(bodyStr))
-                    ?: return@withContext Result.failure(IOException("Could not parse uploaded item"))
+                    ?: return Result.failure(IOException("Could not parse uploaded item"))
                 Result.success(driveItem)
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun executeChunkedUpload(
+        encodedName: String,
+        token: String,
+        totalBytes: Long,
+        openStream: () -> InputStream?,
+    ): Result<GraphDriveItem> {
+        val sessionBody = """{"item":{"@microsoft.graph.conflictBehavior":"rename"}}"""
+            .toRequestBody("application/json".toMediaTypeOrNull())
+        val sessionReq = Request.Builder()
+            .url("$GRAPH_BASE_URL/me/drive/root:/$encodedName:/createUploadSession")
+            .post(sessionBody)
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+
+        val uploadUrl = try {
+            httpClient.newCall(sessionReq).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    return Result.failure(IOException("Create upload session failed: ${resp.code} ${resp.message}"))
+                }
+                JSONObject(resp.body?.string() ?: "").optString("uploadUrl").takeIf { it.isNotEmpty() }
+                    ?: return Result.failure(IOException("Missing uploadUrl from Graph session"))
+            }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+
+        val stream = openStream() ?: return Result.failure(IOException("Could not open upload stream"))
+        return try {
+            stream.use { input ->
+                val buffer = ByteArray(UPLOAD_CHUNK_BYTES)
+                var offset = 0L
+                while (offset < totalBytes) {
+                    var filled = 0
+                    while (filled < buffer.size && offset + filled < totalBytes) {
+                        val read = input.read(buffer, filled, buffer.size - filled)
+                        if (read == -1) break
+                        filled += read
+                    }
+                    if (filled == 0) break
+
+                    val end = offset + filled - 1
+                    val chunkReq = Request.Builder()
+                        .url(uploadUrl)
+                        .put(buffer.toRequestBody("application/octet-stream".toMediaTypeOrNull(), 0, filled))
+                        .addHeader("Content-Range", "bytes $offset-$end/$totalBytes")
+                        .build()
+
+                    httpClient.newCall(chunkReq).execute().use { resp ->
+                        if (!resp.isSuccessful) {
+                            return Result.failure(IOException("Chunk upload failed: ${resp.code} ${resp.message}"))
+                        }
+                        if (resp.code == 200 || resp.code == 201) {
+                            val driveItem = parseDriveItem(JSONObject(resp.body?.string() ?: ""))
+                                ?: return Result.failure(IOException("Could not parse uploaded item"))
+                            return Result.success(driveItem)
+                        }
+                    }
+                    offset += filled
+                }
+                Result.failure(IOException("Upload ended before completion"))
             }
         } catch (e: Exception) {
             Result.failure(e)

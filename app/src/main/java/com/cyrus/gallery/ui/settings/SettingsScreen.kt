@@ -35,13 +35,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.cyrus.gallery.BuildConfig
 import com.cyrus.gallery.domain.model.AutomaticDownloadMode
 import com.cyrus.gallery.domain.model.SyncNetworkMode
+import kotlinx.coroutines.delay
 
 @Composable
 fun SettingsScreen(
@@ -51,6 +54,13 @@ fun SettingsScreen(
     val storage = viewModel.storageSummary.collectAsStateWithLifecycle().value
     val policy = viewModel.policy.collectAsStateWithLifecycle().value
     val actionMessage = viewModel.actionMessage.collectAsStateWithLifecycle().value
+
+    LaunchedEffect(actionMessage) {
+        if (!actionMessage.isNullOrEmpty()) {
+            delay(3_000)
+            viewModel.clearActionMessage()
+        }
+    }
 
     Column(
         Modifier
@@ -216,7 +226,7 @@ fun SettingsScreen(
 
         ListItem(
             headlineContent = { Text("About Cyrus Gallery") },
-            supportingContent = { Text("Version 0.1.0 · Managed cloud cache & unified library") },
+            supportingContent = { Text("Version ${BuildConfig.VERSION_NAME} · Managed cloud cache & unified library") },
         )
 
         Spacer(Modifier.height(24.dp))

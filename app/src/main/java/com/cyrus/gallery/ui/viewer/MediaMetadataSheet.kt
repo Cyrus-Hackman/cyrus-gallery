@@ -1,6 +1,7 @@
 package com.cyrus.gallery.ui.viewer
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,7 +25,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -33,6 +35,8 @@ import androidx.exifinterface.media.ExifInterface
 import com.cyrus.gallery.domain.model.CloudStorageState
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.MediaSource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -55,8 +59,10 @@ fun MediaMetadataSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val exif = remember(item.localContentUri) {
-        readExif(context, item.localContentUri)
+    val exif by produceState<ExifDetails?>(initialValue = null, item.localContentUri) {
+        value = withContext(Dispatchers.IO) {
+            readExif(context, item.localContentUri)
+        }
     }
 
     ModalBottomSheet(
@@ -161,8 +167,18 @@ private fun readExif(context: Context, uri: Uri?): ExifDetails? {
             val exp = ex.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)?.let { "${it}s" }
             val iso = ex.getAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)?.let { "ISO $it" }
             val focal = ex.getAttribute(ExifInterface.TAG_FOCAL_LENGTH)?.let { "${it}mm" }
-            val w = ex.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0)
-            val h = ex.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0)
+            var w = ex.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0)
+            var h = ex.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0)
+            if (w <= 0 || h <= 0) {
+                context.contentResolver.openInputStream(uri)?.use { dimStream ->
+                    val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeStream(dimStream, null, opts)
+                    if (opts.outWidth > 0 && opts.outHeight > 0) {
+                        w = opts.outWidth
+                        h = opts.outHeight
+                    }
+                }
+            }
 
             ExifDetails(
                 cameraModel = fullModel.takeIf { it.isNotEmpty() },

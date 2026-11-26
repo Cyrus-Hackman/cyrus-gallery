@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import com.cyrus.gallery.data.cache.CloudPolicyPreferences
 import com.cyrus.gallery.domain.model.CloudCachePolicy
 import com.cyrus.gallery.domain.model.SyncNetworkMode
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -19,6 +20,7 @@ import javax.inject.Singleton
 @Singleton
 class OneDriveSyncManager @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val policyPreferences: CloudPolicyPreferences,
 ) {
     private val workManager = WorkManager.getInstance(context)
 
@@ -27,7 +29,7 @@ class OneDriveSyncManager @Inject constructor(
         const val IMMEDIATE_SYNC_WORK_NAME = "cyrus_onedrive_immediate_sync"
     }
 
-    fun schedulePeriodicSync(policy: CloudCachePolicy) {
+    fun schedulePeriodicSync(policy: CloudCachePolicy = policyPreferences.policy.value) {
         val requiredNetwork = if (policy.networkMode == SyncNetworkMode.WIFI_ONLY) {
             NetworkType.UNMETERED
         } else {
@@ -50,7 +52,7 @@ class OneDriveSyncManager @Inject constructor(
         )
     }
 
-    fun enqueueImmediateSync(policy: CloudCachePolicy = CloudCachePolicy()) {
+    fun enqueueImmediateSync(policy: CloudCachePolicy = policyPreferences.policy.value) {
         val requiredNetwork = if (policy.networkMode == SyncNetworkMode.WIFI_ONLY) {
             NetworkType.UNMETERED
         } else {
@@ -79,7 +81,7 @@ class OneDriveSyncManager @Inject constructor(
         mimeType: String,
         sizeBytes: Long,
         isPinned: Boolean = false,
-        policy: CloudCachePolicy = CloudCachePolicy(),
+        policy: CloudCachePolicy = policyPreferences.policy.value,
     ) {
         val requiredNetwork = if (policy.networkMode == SyncNetworkMode.WIFI_ONLY) {
             NetworkType.UNMETERED

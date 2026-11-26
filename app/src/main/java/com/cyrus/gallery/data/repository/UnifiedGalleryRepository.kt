@@ -101,12 +101,28 @@ class UnifiedGalleryRepository @Inject constructor(
             oneDriveRepository.cloudFolders,
             oneDriveRepository.cloudItems,
         ) { localAlbums, cloudFolders, cloudItems ->
-            val cloudItemCounts = cloudItems.groupingBy { it.albumId }.eachCount()
+            val folderById = cloudFolders.associateBy { it.id }
+            val counts = mutableMapOf<String, Int>()
+            val covers = mutableMapOf<String, String>()
+
+            // Roll up item counts and cover thumbnails across nested OneDrive folder ancestors
+            for (item in cloudItems) {
+                var currentFolderId = item.albumId
+                val visited = mutableSetOf<String>()
+                while (currentFolderId != null && visited.add(currentFolderId)) {
+                    counts[currentFolderId] = (counts[currentFolderId] ?: 0) + 1
+                    if (currentFolderId !in covers && !item.thumbnailUrl.isNullOrEmpty()) {
+                        covers[currentFolderId] = item.thumbnailUrl
+                    }
+                    currentFolderId = folderById[currentFolderId]?.parentFolderId
+                }
+            }
+
             val enrichedCloudFolders = cloudFolders.map { folder ->
-                val count = cloudItemCounts[folder.id] ?: folder.itemCount
-                val cover = cloudItems.firstOrNull { it.albumId == folder.id }?.thumbnailUrl
-                    ?: folder.coverThumbnailUrl
-                folder.copy(itemCount = count, coverThumbnailUrl = cover)
+                folder.copy(
+                    itemCount = counts[folder.id] ?: folder.itemCount,
+                    coverThumbnailUrl = covers[folder.id] ?: folder.coverThumbnailUrl,
+                )
             }
             localAlbums + enrichedCloudFolders
         }
@@ -133,13 +149,16 @@ class UnifiedGalleryRepository @Inject constructor(
     override suspend fun uploadToOneDrive(mediaItem: MediaItem): Result<String> = withContext(Dispatchers.IO) {
         val uri = mediaItem.localContentUri
             ?: return@withContext Result.failure(IllegalArgumentException("No local file URI to upload"))
-        val inputStream = context.contentResolver.openInputStream(uri)
-            ?: return@withContext Result.failure(IllegalStateException("Could not read local content"))
-        val bytes = inputStream.use { it.readBytes() }
-        val result = oneDriveRepository.uploadMedia(
+        val sizeBytes = context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            val col = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (col >= 0 && cursor.moveToFirst()) cursor.getLong(col) else -1L
+        } ?: -1L
+
+        val result = oneDriveRepository.uploadStream(
             fileName = mediaItem.displayName,
-            bytes = bytes,
+            contentLength = sizeBytes,
             mimeType = mediaItem.mimeType,
+            openStream = { context.contentResolver.openInputStream(uri) },
         )
         result.map { it.id }
     }
