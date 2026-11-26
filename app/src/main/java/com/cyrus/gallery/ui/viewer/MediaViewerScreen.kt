@@ -1,5 +1,6 @@
 package com.cyrus.gallery.ui.viewer
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,9 +41,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -82,7 +88,43 @@ fun MediaViewerScreen(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MediaViewerScreen(
+    config: ViewerSessionConfig,
+    onCurrentItemChanged: (String) -> Unit,
+    onBack: () -> Unit,
+    viewModel: MediaViewerViewModel = hiltViewModel(),
+) {
+    val liveItemsFlow = remember(config.sourceRoute, config.searchQuery, config.albumId, config.albumName) {
+        viewModel.observeViewerItems(config)
+    }
+    val liveItems by liveItemsFlow.collectAsStateWithLifecycle(initialValue = config.initialItems)
+
+    if (liveItems.isEmpty()) {
+        // Intercept back presses even while restoring live items after configuration changes
+        BackHandler(enabled = true) { onBack() }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator(color = Color.White)
+        }
+        return
+    }
+
+    val targetIndex = liveItems.indexOfFirst { it.id == config.selectedItemId }.coerceAtLeast(0)
+    MediaViewerContent(
+        items = liveItems,
+        initialIndex = targetIndex,
+        initialSelectedItemId = config.selectedItemId,
+        onCurrentItemChanged = onCurrentItemChanged,
+        onBack = onBack,
+        viewModel = viewModel,
+    )
+}
+
 @Composable
 fun MediaViewerScreen(
     items: List<MediaItem>,
@@ -91,11 +133,64 @@ fun MediaViewerScreen(
     viewModel: MediaViewerViewModel = hiltViewModel(),
 ) {
     if (items.isEmpty()) return
+    val clampedIndex = initialIndex.coerceIn(0, items.size - 1)
+    MediaViewerContent(
+        items = items,
+        initialIndex = clampedIndex,
+        initialSelectedItemId = items[clampedIndex].id,
+        onCurrentItemChanged = {},
+        onBack = onBack,
+        viewModel = viewModel,
+    )
+}
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MediaViewerContent(
+    items: List<MediaItem>,
+    initialIndex: Int,
+    initialSelectedItemId: String,
+    onCurrentItemChanged: (String) -> Unit,
+    onBack: () -> Unit,
+    viewModel: MediaViewerViewModel,
+) {
+    // Register BackHandler inside the fullscreen overlay so it always takes precedence over underlying screens
+    BackHandler(enabled = true) {
+        onBack()
+    }
+
+    val safeInitialIndex = initialIndex.coerceIn(0, items.size - 1)
     val pagerState = rememberPagerState(
-        initialPage = initialIndex.coerceIn(0, items.size - 1),
+        initialPage = safeInitialIndex,
         pageCount = { items.size },
     )
+    var anchoredItemId by rememberSaveable { mutableStateOf(initialSelectedItemId) }
+    var lastSettledPage by remember { mutableIntStateOf(safeInitialIndex) }
+    val latestItems by rememberUpdatedState(items)
+
+    // Keep rememberSaveable item ID updated as the user swipes through the pager
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }
+            .collect { page ->
+                if (page != lastSettledPage) {
+                    lastSettledPage = page
+                    latestItems.getOrNull(page)?.id?.let { id ->
+                        anchoredItemId = id
+                        onCurrentItemChanged(id)
+                    }
+                }
+            }
+    }
+
+    // Re-anchor page if background OneDrive sync prepends/reorders items while the viewer is open
+    LaunchedEffect(items) {
+        val targetIdx = items.indexOfFirst { it.id == anchoredItemId }
+        if (targetIdx >= 0 && targetIdx != pagerState.currentPage) {
+            lastSettledPage = targetIdx
+            pagerState.scrollToPage(targetIdx)
+        }
+    }
+
     val currentItem = items.getOrNull(pagerState.currentPage) ?: return
 
     var controlsVisible by remember { mutableStateOf(true) }
@@ -210,7 +305,7 @@ fun MediaViewerScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 // Favorite Toggle
-                val isFav = currentItem.id in favoriteIds || currentItem.isFavourite
+                val isFav = favoriteIds?.contains(currentItem.id) ?: currentItem.isFavourite
                 IconButton(onClick = { viewModel.toggleFavorite(currentItem) }) {
                     Icon(
                         if (isFav) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,

@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -33,15 +34,27 @@ import com.cyrus.gallery.ui.navigation.GalleryDestination
 import com.cyrus.gallery.ui.onedrive.OneDriveScreen
 import com.cyrus.gallery.ui.settings.SettingsScreen
 import com.cyrus.gallery.ui.viewer.MediaViewerScreen
+import com.cyrus.gallery.ui.viewer.ViewerSessionConfig
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 
 @Composable
 fun CyrusGalleryApp() {
     val navController = rememberNavController()
     val current = navController.currentBackStackEntryAsState().value?.destination?.route
-    var viewingState by remember { mutableStateOf<Pair<List<MediaItem>, Int>?>(null) }
     var savedRoute by rememberSaveable { mutableStateOf(GalleryDestination.PHOTOS.route) }
 
-    val activeState = viewingState
+    // Persist viewer target cleanly via primitive rememberSaveable fields so rotation keeps the open item without TransactionTooLargeException
+    var viewerSourceRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewerSelectedItemId by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewerSearchQuery by rememberSaveable { mutableStateOf("") }
+    var viewerAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewerAlbumName by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewerSessionSeq by rememberSaveable { mutableIntStateOf(0) }
+    var viewerInitialItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+
+    val isViewerOpen = viewerSourceRoute != null && viewerSelectedItemId != null
+    val tabReselected = remember { MutableSharedFlow<String>(extraBufferCapacity = 1) }
 
     // Track active top-level tab so it survives configuration changes and recomposition
     LaunchedEffect(current) {
@@ -50,39 +63,62 @@ fun CyrusGalleryApp() {
         }
     }
 
-    val onDismissViewer = {
-        // Capture savedRoute before nulling viewingState to avoid recomposition race
-        val routeToRestore = savedRoute
-        viewingState = null
-        if (current != routeToRestore) {
-            navController.navigate(routeToRestore) {
-                launchSingleTop = true
-                restoreState = true
-                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-            }
+    val navigateToTab: (String) -> Unit = { route ->
+        savedRoute = route
+        navController.navigate(route) {
+            launchSingleTop = true
+            restoreState = true
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
         }
     }
 
-    // Intercept phone's physical back button / swipe back gesture when viewer is open
-    BackHandler(enabled = activeState != null) {
-        onDismissViewer()
+    val onOpenViewer: (ViewerSessionConfig) -> Unit = { config ->
+        viewerSourceRoute = config.sourceRoute
+        viewerSelectedItemId = config.selectedItemId
+        viewerSearchQuery = config.searchQuery
+        viewerAlbumId = config.albumId
+        viewerAlbumName = config.albumName
+        viewerInitialItems = config.initialItems
+        viewerSessionSeq++
+    }
+
+    val onDismissViewer = {
+        val routeToRestore = savedRoute
+        viewerSourceRoute = null
+        viewerSelectedItemId = null
+        viewerSearchQuery = ""
+        viewerAlbumId = null
+        viewerAlbumName = null
+        viewerInitialItems = emptyList()
+        if (current != routeToRestore) {
+            navigateToTab(routeToRestore)
+        }
+    }
+
+    // Save non-start tab scroll & ViewModel state on system Back instead of popping and destroying the tab
+    BackHandler(
+        enabled = !isViewerOpen &&
+            current != null &&
+            current != GalleryDestination.PHOTOS.route &&
+            current != "settings",
+    ) {
+        navigateToTab(GalleryDestination.PHOTOS.route)
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // App Scaffold remains persistently composed so grid scroll position is never lost
+        // App Scaffold remains persistently composed so grid scroll position is never lost while viewer is open
         Scaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             bottomBar = {
-                if (current != "settings" && activeState == null) NavigationBar {
+                if (current != "settings" && !isViewerOpen) NavigationBar {
                     GalleryDestination.entries.forEach { destination ->
                         NavigationBarItem(
                             selected = current == destination.route,
                             onClick = {
-                                savedRoute = destination.route
-                                navController.navigate(destination.route) {
-                                    launchSingleTop = true
-                                    restoreState = true
-                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                if (current == destination.route) {
+                                    tabReselected.tryEmit(destination.route)
+                                } else {
+                                    navigateToTab(destination.route)
                                 }
                             },
                             icon = { Icon(destination.icon, contentDescription = destination.label) },
@@ -95,19 +131,28 @@ fun CyrusGalleryApp() {
             GalleryNavHost(
                 navController = navController,
                 padding = padding,
-                onMediaClick = { clickedItem, allItems ->
-                    val index = allItems.indexOfFirst { it.id == clickedItem.id }.coerceAtLeast(0)
-                    viewingState = Pair(allItems, index)
-                },
+                tabReselected = tabReselected,
+                onOpenViewer = onOpenViewer,
             )
         }
 
-        // Fullscreen Image/Video Viewer overlaid on top without disposing the grid
-        if (activeState != null && activeState.first.isNotEmpty()) {
-            key(activeState.first.getOrNull(activeState.second)?.id ?: activeState.second) {
+        // Fullscreen Image/Video Viewer overlaid on top (BackHandler lives inside MediaViewerScreen for guaranteed precedence)
+        val activeSource = viewerSourceRoute
+        val activeSelectedId = viewerSelectedItemId
+        if (activeSource != null && activeSelectedId != null) {
+            key(viewerSessionSeq) {
                 MediaViewerScreen(
-                    items = activeState.first,
-                    initialIndex = activeState.second,
+                    config = ViewerSessionConfig(
+                        sourceRoute = activeSource,
+                        selectedItemId = activeSelectedId,
+                        searchQuery = viewerSearchQuery,
+                        albumId = viewerAlbumId,
+                        albumName = viewerAlbumName,
+                        initialItems = viewerInitialItems,
+                    ),
+                    onCurrentItemChanged = { newId ->
+                        viewerSelectedItemId = newId
+                    },
                     onBack = onDismissViewer,
                 )
             }
@@ -119,23 +164,35 @@ fun CyrusGalleryApp() {
 private fun GalleryNavHost(
     navController: androidx.navigation.NavHostController,
     padding: PaddingValues,
-    onMediaClick: (MediaItem, List<MediaItem>) -> Unit,
+    tabReselected: Flow<String>,
+    onOpenViewer: (ViewerSessionConfig) -> Unit,
 ) {
     NavHost(navController, startDestination = GalleryDestination.PHOTOS.route, modifier = Modifier.padding(padding)) {
         composable("photos") {
             PhotosScreen(
                 onSettings = { navController.navigate("settings") },
-                onMediaClick = onMediaClick,
+                onOpenViewer = onOpenViewer,
+                tabReselected = tabReselected,
             )
         }
         composable("albums") {
-            AlbumsScreen(onMediaClick = onMediaClick)
+            AlbumsScreen(
+                onOpenViewer = onOpenViewer,
+                tabReselected = tabReselected,
+            )
         }
         composable("onedrive") {
-            OneDriveScreen(onMediaClick = onMediaClick)
+            OneDriveScreen(
+                onSettings = { navController.navigate("settings") },
+                onOpenViewer = onOpenViewer,
+                tabReselected = tabReselected,
+            )
         }
         composable("favourites") {
-            FavouritesScreen(onMediaClick = onMediaClick)
+            FavouritesScreen(
+                onOpenViewer = onOpenViewer,
+                tabReselected = tabReselected,
+            )
         }
         composable("settings") {
             SettingsScreen(onBack = { navController.popBackStack() })

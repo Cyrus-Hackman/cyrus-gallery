@@ -10,6 +10,7 @@ import com.cyrus.gallery.domain.repository.CloudCacheRepository
 import com.cyrus.gallery.domain.repository.GalleryRepository
 import com.cyrus.gallery.data.database.FavoriteMediaDao
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +19,22 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+object ViewerScopeRoutes {
+    const val PHOTOS = "photos"
+    const val ALBUMS = "albums"
+    const val ONEDRIVE = "onedrive"
+    const val FAVOURITES = "favourites"
+}
+
+data class ViewerSessionConfig(
+    val sourceRoute: String,
+    val selectedItemId: String,
+    val searchQuery: String = "",
+    val albumId: String? = null,
+    val albumName: String? = null,
+    val initialItems: List<MediaItem> = emptyList(),
+)
 
 @HiltViewModel
 class MediaViewerViewModel @Inject constructor(
@@ -31,13 +48,40 @@ class MediaViewerViewModel @Inject constructor(
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
 
-    val favoriteIds: StateFlow<Set<String>> = favoriteDao.observeFavoriteIds()
-        .map { it.toSet() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+    // Starts as null until Room emits so static callers avoid an un-favorited 1-frame flicker while still allowing un-favoriting
+    val favoriteIds: StateFlow<Set<String>?> = favoriteDao.observeFavoriteIds()
+        .map<List<String>, Set<String>?> { it.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    fun observeViewerItems(config: ViewerSessionConfig): Flow<List<MediaItem>> {
+        return when (config.sourceRoute) {
+            ViewerScopeRoutes.ONEDRIVE -> repository.observeCloudMedia().map { items ->
+                if (config.searchQuery.isNotBlank()) items.filter { it.matchesQuery(config.searchQuery) } else items
+            }
+            ViewerScopeRoutes.ALBUMS -> repository.observeMedia().map { items ->
+                items.filter { item ->
+                    (config.albumId != null && item.albumId == config.albumId) ||
+                        (config.albumName != null && item.albumName == config.albumName)
+                }
+            }
+            ViewerScopeRoutes.FAVOURITES -> {
+                var sessionItemIds = config.initialItems.map { it.id }.toSet().takeIf { it.isNotEmpty() }
+                repository.observeMedia().map { items ->
+                    val allowedIds = sessionItemIds ?: (
+                        items.filter { it.isFavourite }.map { it.id }.toSet() + config.selectedItemId
+                        ).also { sessionItemIds = it }
+                    items.filter { it.id in allowedIds || it.isFavourite }
+                }
+            }
+            else -> repository.observeMedia().map { items ->
+                if (config.searchQuery.isNotBlank()) items.filter { it.matchesQuery(config.searchQuery) } else items
+            }
+        }
+    }
 
     fun toggleFavorite(item: MediaItem) {
         viewModelScope.launch {
-            val isFav = item.id in favoriteIds.value || item.isFavourite
+            val isFav = favoriteIds.value?.contains(item.id) ?: item.isFavourite
             repository.setFavorite(item.id, !isFav)
         }
     }

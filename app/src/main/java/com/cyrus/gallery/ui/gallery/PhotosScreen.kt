@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -29,16 +30,30 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.ui.components.EmptyLibraryState
+import com.cyrus.gallery.ui.navigation.GalleryDestination
 import com.cyrus.gallery.ui.permissions.MediaPermissionGate
+import com.cyrus.gallery.ui.viewer.ViewerScopeRoutes
+import com.cyrus.gallery.ui.viewer.ViewerSessionConfig
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
 
 @Composable
 fun PhotosScreen(
     onSettings: () -> Unit,
     onMediaClick: (MediaItem, List<MediaItem>) -> Unit = { _, _ -> },
+    onOpenViewer: ((ViewerSessionConfig) -> Unit)? = null,
+    tabReselected: Flow<String> = emptyFlow(),
     viewModel: GalleryViewModel = hiltViewModel(),
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
     val gridState = rememberLazyGridState()
+
+    LaunchedEffect(tabReselected, gridState) {
+        tabReselected.filter { it == GalleryDestination.PHOTOS.route }.collect {
+            gridState.animateScrollToItem(0)
+        }
+    }
 
     // Close search on phone back gesture / button press instead of quitting app
     BackHandler(enabled = state.isSearchActive) {
@@ -125,7 +140,20 @@ fun PhotosScreen(
                     groups = state.groups,
                     state = gridState,
                     modifier = Modifier.fillMaxSize(),
-                    onMediaClick = onMediaClick,
+                    onMediaClick = { clicked, all ->
+                        if (onOpenViewer != null) {
+                            onOpenViewer(
+                                ViewerSessionConfig(
+                                    sourceRoute = ViewerScopeRoutes.PHOTOS,
+                                    selectedItemId = clicked.id,
+                                    searchQuery = if (state.isSearchActive) state.searchQuery else "",
+                                    initialItems = all,
+                                ),
+                            )
+                        } else {
+                            onMediaClick(clicked, all)
+                        }
+                    },
                 )
             }
         }

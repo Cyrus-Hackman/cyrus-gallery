@@ -29,10 +29,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,11 +50,19 @@ import com.cyrus.gallery.domain.model.groupByMonth
 import com.cyrus.gallery.ui.components.EmptyLibraryState
 import com.cyrus.gallery.ui.gallery.GalleryViewModel
 import com.cyrus.gallery.ui.gallery.MediaGrid
+import com.cyrus.gallery.ui.navigation.GalleryDestination
 import com.cyrus.gallery.ui.permissions.MediaPermissionGate
+import com.cyrus.gallery.ui.viewer.ViewerScopeRoutes
+import com.cyrus.gallery.ui.viewer.ViewerSessionConfig
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
 
 @Composable
 fun AlbumsScreen(
     onMediaClick: (MediaItem, List<MediaItem>) -> Unit = { _, _ -> },
+    onOpenViewer: ((ViewerSessionConfig) -> Unit)? = null,
+    tabReselected: Flow<String> = emptyFlow(),
     viewModel: AlbumsViewModel = hiltViewModel(),
     galleryViewModel: GalleryViewModel = hiltViewModel(),
 ) {
@@ -62,6 +70,17 @@ fun AlbumsScreen(
     val galleryState = galleryViewModel.uiState.collectAsStateWithLifecycle().value
     var selectedAlbum by rememberSaveable { mutableStateOf<String?>(null) }
     val currentAlbumObj = selectedAlbum?.let { id -> state.albums.find { it.id == id } }
+    val albumsListGridState = rememberLazyGridState()
+
+    LaunchedEffect(tabReselected) {
+        tabReselected.filter { it == GalleryDestination.ALBUMS.route }.collect {
+            if (selectedAlbum != null) {
+                selectedAlbum = null
+            } else {
+                albumsListGridState.animateScrollToItem(0)
+            }
+        }
+    }
 
     // Intercept phone's physical back button when inside an album
     BackHandler(enabled = selectedAlbum != null) {
@@ -109,7 +128,21 @@ fun AlbumsScreen(
                     groups = albumMedia.groupByMonth(),
                     state = albumGridState,
                     modifier = Modifier.fillMaxSize(),
-                    onMediaClick = onMediaClick,
+                    onMediaClick = { clicked, all ->
+                        if (onOpenViewer != null) {
+                            onOpenViewer(
+                                ViewerSessionConfig(
+                                    sourceRoute = ViewerScopeRoutes.ALBUMS,
+                                    selectedItemId = clicked.id,
+                                    albumId = currentAlbum.id,
+                                    albumName = currentAlbum.name,
+                                    initialItems = all,
+                                ),
+                            )
+                        } else {
+                            onMediaClick(clicked, all)
+                        }
+                    },
                 )
             }
         } else {
@@ -142,6 +175,7 @@ fun AlbumsScreen(
                 } else {
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(2),
+                        state = albumsListGridState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),

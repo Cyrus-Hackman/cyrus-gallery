@@ -3,6 +3,7 @@ package com.cyrus.gallery.data.repository
 import android.content.Context
 import android.net.Uri
 import com.cyrus.gallery.data.database.CloudMediaCacheDao
+import com.cyrus.gallery.data.database.CloudMediaCacheEntity
 import com.cyrus.gallery.data.database.FavoriteMediaDao
 import com.cyrus.gallery.data.database.FavoriteMediaEntity
 import com.cyrus.gallery.domain.model.Album
@@ -35,28 +36,8 @@ class UnifiedGalleryRepository @Inject constructor(
             cacheDao.observeAll(),
             favoriteDao.observeFavoriteIds(),
         ) { localItems, cloudItems, cachedEntities, favoriteIds ->
-            val cacheEntityMap = cachedEntities.associateBy { it.oneDriveItemId }
             val favSet = favoriteIds.toSet()
-
-            // Enrich cloud items with their current local cache state and local URI
-            val enrichedCloudItems = cloudItems.map { cloudItem ->
-                val entity = cloudItem.oneDriveItemId?.let { cacheEntityMap[it] }
-                val isFav = cloudItem.id in favSet
-                if (entity != null) {
-                    val localFile = entity.localCachedPath?.let { File(it) }
-                    val hasLocalFile = localFile != null && localFile.exists()
-
-                    cloudItem.copy(
-                        cloudStorageState = if (hasLocalFile) entity.storageState else CloudStorageState.REMOTE_ONLY,
-                        localContentUri = if (hasLocalFile) Uri.fromFile(localFile) else null,
-                        thumbnailUrl = cloudItem.thumbnailUrl ?: entity.thumbnailCachedPath,
-                        highResUrl = cloudItem.highResUrl ?: "https://graph.microsoft.com/v1.0/me/drive/items/${cloudItem.oneDriveItemId}/content",
-                        isFavourite = isFav,
-                    )
-                } else {
-                    cloudItem.copy(isFavourite = isFav)
-                }
-            }
+            val enrichedCloudItems = enrichCloudItems(cloudItems, cachedEntities, favSet)
 
             // Deduplicate local vs cloud copies of the exact same media
             val localNameSet = localItems.map { it.displayName.lowercase() }.toSet()
@@ -73,6 +54,42 @@ class UnifiedGalleryRepository @Inject constructor(
             // Merge into unified newest-first stream
             (enrichedLocalItems + distinctCloudItems).sortedByDescending {
                 it.createdAt ?: it.modifiedAt ?: java.time.Instant.EPOCH
+            }
+        }
+    }
+
+    override fun observeCloudMedia(): Flow<List<MediaItem>> {
+        return combine(
+            oneDriveRepository.cloudItems,
+            cacheDao.observeAll(),
+            favoriteDao.observeFavoriteIds(),
+        ) { cloudItems, cachedEntities, favoriteIds ->
+            enrichCloudItems(cloudItems, cachedEntities, favoriteIds.toSet())
+        }
+    }
+
+    private fun enrichCloudItems(
+        cloudItems: List<MediaItem>,
+        cachedEntities: List<CloudMediaCacheEntity>,
+        favSet: Set<String>,
+    ): List<MediaItem> {
+        val cacheEntityMap = cachedEntities.associateBy { it.oneDriveItemId }
+        return cloudItems.map { cloudItem ->
+            val entity = cloudItem.oneDriveItemId?.let { cacheEntityMap[it] }
+            val isFav = cloudItem.id in favSet
+            if (entity != null) {
+                val localFile = entity.localCachedPath?.let { File(it) }
+                val hasLocalFile = localFile != null && localFile.exists()
+
+                cloudItem.copy(
+                    cloudStorageState = if (hasLocalFile) entity.storageState else CloudStorageState.REMOTE_ONLY,
+                    localContentUri = if (hasLocalFile) Uri.fromFile(localFile) else null,
+                    thumbnailUrl = cloudItem.thumbnailUrl ?: entity.thumbnailCachedPath,
+                    highResUrl = cloudItem.highResUrl ?: "https://graph.microsoft.com/v1.0/me/drive/items/${cloudItem.oneDriveItemId}/content",
+                    isFavourite = isFav,
+                )
+            } else {
+                cloudItem.copy(isFavourite = isFav)
             }
         }
     }

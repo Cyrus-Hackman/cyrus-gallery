@@ -39,12 +39,7 @@ class GalleryViewModel @Inject constructor(repository: GalleryRepository) : View
         _searchQuery,
     ) { items, isSearch, query ->
         val filtered = if (isSearch && query.isNotBlank()) {
-            val q = query.trim().lowercase()
-            items.filter { item ->
-                item.displayName.lowercase().contains(q) ||
-                    (item.albumName?.lowercase()?.contains(q) == true) ||
-                    item.mimeType.lowercase().contains(q)
-            }
+            items.filter { it.matchesQuery(query) }
         } else {
             items
         }
