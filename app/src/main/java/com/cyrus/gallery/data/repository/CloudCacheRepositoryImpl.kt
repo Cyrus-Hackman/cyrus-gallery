@@ -48,6 +48,9 @@ class CloudCacheRepositoryImpl @Inject constructor(
         )
     }
 
+    override suspend fun findByItemId(itemId: String): com.cyrus.gallery.data.database.CloudMediaCacheEntity? =
+        withContext(Dispatchers.IO) { cacheDao.findByItemId(itemId) }
+
     override suspend fun setPinned(driveId: String, itemId: String, pinned: Boolean): Unit = withContext(Dispatchers.IO) {
         // Look up by itemId first because driveId stores parentFolderId for items inside OneDrive folders
         val entity = cacheDao.findByItemId(itemId) ?: cacheDao.find(driveId, itemId) ?: return@withContext

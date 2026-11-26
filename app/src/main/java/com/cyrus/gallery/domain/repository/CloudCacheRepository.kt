@@ -1,11 +1,13 @@
 package com.cyrus.gallery.domain.repository
 
+import com.cyrus.gallery.data.database.CloudMediaCacheEntity
 import com.cyrus.gallery.domain.model.CloudCachePolicy
 import kotlinx.coroutines.flow.Flow
 
 /** Cache operations are strictly local and must never delete OneDrive originals. */
 interface CloudCacheRepository {
     fun observeStorageSummary(): Flow<CloudCacheStorageSummary>
+    suspend fun findByItemId(itemId: String): CloudMediaCacheEntity?
     suspend fun setPinned(driveId: String, itemId: String, pinned: Boolean)
     suspend fun clearLocalCopy(itemId: String)
     suspend fun clearTemporaryCache(): CacheClearResult

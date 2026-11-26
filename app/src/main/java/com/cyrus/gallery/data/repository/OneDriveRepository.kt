@@ -201,6 +201,15 @@ class OneDriveRepository @Inject constructor(
                         !existing.localCachedPath.isNullOrEmpty() &&
                         File(existing.localCachedPath).exists()
 
+                    // For pinned items whose eTag changed, preserve the pinned state and cached file
+                    // path until the worker downloads the updated version. Without this guard, a delta
+                    // sync page completing mid-download would overwrite storageState → REMOTE_ONLY and
+                    // localCachedPath → null, losing the offline copy reference entirely.
+                    val isPinnedOffline = existing?.storageState == CloudStorageState.PINNED_OFFLINE
+                    val preservePinnedFile = isPinnedOffline &&
+                        !existing?.localCachedPath.isNullOrEmpty() &&
+                        File(existing!!.localCachedPath!!).exists()
+
                     val entity = CloudMediaCacheEntity(
                         cacheId = cacheId,
                         oneDriveItemId = item.id,
@@ -208,12 +217,12 @@ class OneDriveRepository @Inject constructor(
                         fileName = item.name,
                         mimeType = item.mimeType,
                         originalSizeBytes = item.sizeBytes,
-                        localCachedPath = if (localFileValid) existing?.localCachedPath else null,
+                        localCachedPath = if (localFileValid || preservePinnedFile) existing?.localCachedPath else null,
                         thumbnailCachedPath = item.thumbnailUrl,
-                        storageState = if (localFileValid) existing!!.storageState else CloudStorageState.REMOTE_ONLY,
-                        downloadStatus = if (localFileValid) existing!!.downloadStatus else CloudDownloadStatus.NOT_DOWNLOADED,
-                        downloadProgress = if (localFileValid) existing!!.downloadProgress else 0,
-                        downloadedAtMillis = if (localFileValid) existing?.downloadedAtMillis else null,
+                        storageState = if (localFileValid || preservePinnedFile) existing!!.storageState else CloudStorageState.REMOTE_ONLY,
+                        downloadStatus = if (localFileValid || preservePinnedFile) existing!!.downloadStatus else CloudDownloadStatus.NOT_DOWNLOADED,
+                        downloadProgress = if (localFileValid || preservePinnedFile) existing!!.downloadProgress else 0,
+                        downloadedAtMillis = if (localFileValid || preservePinnedFile) existing?.downloadedAtMillis else null,
                         lastAccessedAtMillis = existing?.lastAccessedAtMillis,
                         lastSynchronizedAtMillis = syncTimeMillis,
                         createdAtMillis = item.createdAt?.toEpochMilli(),

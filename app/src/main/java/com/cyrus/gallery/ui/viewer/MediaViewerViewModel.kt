@@ -128,12 +128,15 @@ class MediaViewerViewModel @Inject constructor(
             val targetPinned = !isCurrentlyPinned
             cacheRepository.setPinned(item.albumId ?: "root", itemId, targetPinned)
             if (targetPinned && item.localContentUri == null) {
+                // Read the actual file size from Room so the download worker can validate the stream
+                // length. Passing 0L skips size validation entirely, which masks truncated downloads.
+                val entity = cacheRepository.findByItemId(itemId)
                 syncManager.enqueueDownload(
                     itemId = itemId,
                     driveId = item.albumId ?: "root",
                     fileName = item.displayName,
                     mimeType = item.mimeType,
-                    sizeBytes = 0L,
+                    sizeBytes = entity?.originalSizeBytes ?: 0L,
                     isPinned = true,
                 )
             }

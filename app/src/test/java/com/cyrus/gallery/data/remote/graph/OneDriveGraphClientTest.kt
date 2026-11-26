@@ -214,4 +214,64 @@ class OneDriveGraphClientTest {
         assertEquals(listOf("folder_deleted"), result.deletedIds)
         assertTrue(result.items.isEmpty())
     }
+
+    @Test
+    fun `parseDriveItem uses static Graph thumbnail endpoint for delta items without thumbnails expansion`() {
+        // Delta responses never include thumbnails expansion, so the thumbnail URL must always be the
+        // stable authenticated Graph endpoint — never the expiring pre-signed @microsoft.graph.downloadUrl.
+        val deltaItemJson = """
+        {
+            "id": "item_delta_01",
+            "name": "photo.jpg",
+            "size": 3145728,
+            "image": {},
+            "file": { "mimeType": "image/jpeg" },
+            "@microsoft.graph.downloadUrl": "https://public.example.com/expiring_presigned_url?token=abc",
+            "parentReference": { "id": "folder_01" }
+        }
+        """.trimIndent()
+
+        val item = OneDriveGraphClientImpl.parseDriveItem(JSONObject(deltaItemJson))
+        assertNotNull(item)
+
+        // thumbnailUrl must point to the static Graph endpoint, NOT the expiring downloadUrl
+        assertEquals(
+            "https://graph.microsoft.com/v1.0/me/drive/items/item_delta_01/thumbnails/0/large/content",
+            item!!.thumbnailUrl,
+        )
+        // downloadUrl must still be preserved for use as highResUrl
+        assertEquals("https://public.example.com/expiring_presigned_url?token=abc", item.downloadUrl)
+    }
+
+    @Test
+    fun `parseDriveItem uses expanded thumbnail URL when thumbnails expansion is present`() {
+        // Children calls DO expand thumbnails, so the expanded URL should be preferred over the static endpoint.
+        val childItemJson = """
+        {
+            "id": "item_child_01",
+            "name": "photo.jpg",
+            "size": 2048576,
+            "image": {},
+            "file": { "mimeType": "image/jpeg" },
+            "@microsoft.graph.downloadUrl": "https://public.example.com/expiring_presigned_url?token=xyz",
+            "thumbnails": [
+                {
+                    "large": { "url": "https://sn3302files.storage.live.com/y4m_thumbnail_large.jpg" },
+                    "medium": { "url": "https://sn3302files.storage.live.com/y4m_thumbnail_medium.jpg" }
+                }
+            ],
+            "parentReference": { "id": "folder_01" }
+        }
+        """.trimIndent()
+
+        val item = OneDriveGraphClientImpl.parseDriveItem(JSONObject(childItemJson))
+        assertNotNull(item)
+
+        // Should use the 'large' expanded thumbnail, not the downloadUrl or the static Graph endpoint
+        assertEquals(
+            "https://sn3302files.storage.live.com/y4m_thumbnail_large.jpg",
+            item!!.thumbnailUrl,
+        )
+        assertEquals("https://public.example.com/expiring_presigned_url?token=xyz", item.downloadUrl)
+    }
 }
