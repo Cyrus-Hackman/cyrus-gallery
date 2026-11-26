@@ -103,11 +103,11 @@ class OneDriveRepository @Inject constructor(
                             createdAt = itemDate,
                             modifiedAt = itemDate,
                             oneDriveItemId = entity.oneDriveItemId,
-                            thumbnailUrl = entity.thumbnailCachedPath
+                            thumbnailUrl = entity.thumbnailCachedPath?.takeIf { it.isNotBlank() }
                                 ?: "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/thumbnails/0/large/content",
                             highResUrl = "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/content",
                             cloudStorageState = entity.storageState,
-                            albumId = entity.driveId.takeIf { it != "root" },
+                            albumId = entity.driveId.takeIf { it.isNotBlank() && it != "root" },
                         )
                     }.sortedByDescending { it.createdAt ?: java.time.Instant.EPOCH }
                 }

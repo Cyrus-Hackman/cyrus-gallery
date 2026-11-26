@@ -85,7 +85,8 @@ class UnifiedGalleryRepository @Inject constructor(
                 cloudItem.copy(
                     cloudStorageState = if (hasLocalFile) entity.storageState else CloudStorageState.REMOTE_ONLY,
                     localContentUri = if (hasLocalFile) Uri.fromFile(localFile) else null,
-                    thumbnailUrl = cloudItem.thumbnailUrl ?: entity.thumbnailCachedPath,
+                    thumbnailUrl = cloudItem.thumbnailUrl?.takeIf { it.isNotBlank() }
+                        ?: entity.thumbnailCachedPath?.takeIf { it.isNotBlank() },
                     highResUrl = cloudItem.highResUrl ?: "https://graph.microsoft.com/v1.0/me/drive/items/${cloudItem.oneDriveItemId}/content",
                     isFavourite = isFav,
                 )

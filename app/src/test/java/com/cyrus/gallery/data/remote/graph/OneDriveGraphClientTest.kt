@@ -274,4 +274,69 @@ class OneDriveGraphClientTest {
         )
         assertEquals("https://public.example.com/expiring_presigned_url?token=xyz", item.downloadUrl)
     }
+
+    @Test
+    fun `parseDriveItem treats empty and null JSON strings as absent so fallbacks apply`() {
+        val itemJson = """
+        {
+            "id": "item_empty_fields",
+            "name": "Clip.mp4",
+            "size": 1048576,
+            "eTag": "",
+            "cTag": null,
+            "file": { "mimeType": "" },
+            "parentReference": { "id": "" },
+            "@microsoft.graph.downloadUrl": "",
+            "thumbnails": [
+                {
+                    "large": { "url": "" },
+                    "medium": { "url": null }
+                }
+            ]
+        }
+        """.trimIndent()
+
+        val item = OneDriveGraphClientImpl.parseDriveItem(JSONObject(itemJson))
+        assertNotNull(item)
+        item!!
+
+        assertTrue(item.isVideo)
+        assertEquals("video/mp4", item.mimeType)
+        assertNull(item.parentFolderId)
+        assertNull(item.eTag)
+        assertNull(item.cTag)
+        assertNull(item.downloadUrl)
+        assertEquals(
+            "https://graph.microsoft.com/v1.0/me/drive/items/item_empty_fields/thumbnails/0/large/content",
+            item.thumbnailUrl,
+        )
+    }
+
+    @Test
+    fun `parseDriveItem falls back from empty large thumbnail url to medium thumbnail url`() {
+        val itemJson = """
+        {
+            "id": "item_thumb_fallback",
+            "name": "Shot.heic",
+            "size": 512000,
+            "file": {},
+            "thumbnails": [
+                {
+                    "large": {},
+                    "medium": { "url": "https://example.com/thumb_medium.jpg" }
+                }
+            ],
+            "parentReference": { "id": "folder_parent_1" }
+        }
+        """.trimIndent()
+
+        val item = OneDriveGraphClientImpl.parseDriveItem(JSONObject(itemJson))
+        assertNotNull(item)
+        item!!
+
+        assertTrue(item.isImage)
+        assertEquals("image/heic", item.mimeType)
+        assertEquals("https://example.com/thumb_medium.jpg", item.thumbnailUrl)
+        assertEquals("folder_parent_1", item.parentFolderId)
+    }
 }

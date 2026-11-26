@@ -75,17 +75,22 @@ class OneDriveGraphClientImpl @Inject constructor(
         private const val CHILDREN_SELECT_FIELDS =
             "id,name,size,eTag,cTag,createdDateTime,lastModifiedDateTime,file,folder,root,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,thumbnails,parentReference"
 
+        private fun JSONObject.optNonBlankString(key: String): String? {
+            if (isNull(key)) return null
+            return optString(key).takeIf { it.isNotBlank() }
+        }
+
         internal fun parsePagedResult(jsonString: String): GraphPagedResult {
             val json = JSONObject(jsonString)
             val valueArray = json.optJSONArray("value") ?: return GraphPagedResult(emptyList())
             val items = mutableListOf<GraphDriveItem>()
 
             for (i in 0 until valueArray.length()) {
-                val obj = valueArray.getJSONObject(i)
+                val obj = valueArray.optJSONObject(i) ?: continue
                 parseDriveItem(obj)?.let { items.add(it) }
             }
 
-            val nextLink = json.optString("@odata.nextLink").takeIf { it.isNotEmpty() }
+            val nextLink = json.optNonBlankString("@odata.nextLink")
             return GraphPagedResult(items = items, nextLink = nextLink)
         }
 
@@ -96,39 +101,42 @@ class OneDriveGraphClientImpl @Inject constructor(
             val deletedIds = mutableListOf<String>()
 
             for (i in 0 until valueArray.length()) {
-                val obj = valueArray.getJSONObject(i)
-                val isDeleted = obj.has("deleted") || obj.has("@removed")
+                val obj = valueArray.optJSONObject(i) ?: continue
+                val isDeleted = !obj.isNull("deleted") || !obj.isNull("@removed")
                 if (isDeleted) {
-                    obj.optString("id").takeIf { it.isNotEmpty() }?.let { deletedIds.add(it) }
+                    obj.optNonBlankString("id")?.let { deletedIds.add(it) }
                 } else {
                     parseDriveItem(obj)?.let { items.add(it) }
                 }
             }
 
-            val nextLink = json.optString("@odata.nextLink").takeIf { it.isNotEmpty() }
-            val deltaLink = json.optString("@odata.deltaLink").takeIf { it.isNotEmpty() }
+            val nextLink = json.optNonBlankString("@odata.nextLink")
+            val deltaLink = json.optNonBlankString("@odata.deltaLink")
             return GraphDeltaResult(items = items, deletedIds = deletedIds, nextLink = nextLink, deltaLink = deltaLink)
         }
 
         internal fun parseDriveItem(obj: JSONObject): GraphDriveItem? {
-            val id = obj.optString("id").takeIf { it.isNotEmpty() } ?: return null
-            val name = obj.optString("name", "")
+            val id = obj.optNonBlankString("id") ?: return null
+            val name = if (obj.isNull("name")) "" else obj.optString("name", "")
             val parentRef = obj.optJSONObject("parentReference")
-            val parentFolderId = parentRef?.optString("id")?.takeIf { it.isNotEmpty() }
+            val parentFolderId = parentRef?.optNonBlankString("id")
+
+            val hasRootFacet = !obj.isNull("root")
+            val hasFolderFacet = !obj.isNull("folder")
 
             // Microsoft Graph /delta returns the drive's root DriveItem itself; exclude it so
             // top-level folders remain at root instead of being nested under a synthetic "root" album.
-            val isDriveRoot = obj.has("root") ||
-                (obj.has("folder") && parentFolderId == null && name.equals("root", ignoreCase = true))
+            val isDriveRoot = hasRootFacet ||
+                (hasFolderFacet && parentFolderId == null && name.equals("root", ignoreCase = true))
             if (isDriveRoot) return null
 
             val size = obj.optLong("size", 0L)
-            val eTag = obj.optString("eTag").takeIf { it.isNotEmpty() }
-            val cTag = obj.optString("cTag").takeIf { it.isNotEmpty() }
-            val isFolder = obj.has("folder")
+            val eTag = obj.optNonBlankString("eTag")
+            val cTag = obj.optNonBlankString("cTag")
+            val isFolder = hasFolderFacet
 
             val fileObj = obj.optJSONObject("file")
-            val rawMimeType = fileObj?.optString("mimeType")
+            val rawMimeType = fileObj?.optNonBlankString("mimeType")
 
             val ext = name.substringAfterLast('.', "").lowercase()
             val isImageExtension = ext in setOf(
@@ -140,15 +148,15 @@ class OneDriveGraphClientImpl @Inject constructor(
 
             // Comprehensive media classification: check facets, MIME types, and file extensions
             val isImage = !isFolder && (
-                obj.has("image") ||
-                obj.has("photo") ||
-                rawMimeType?.startsWith("image/") == true ||
+                !obj.isNull("image") ||
+                !obj.isNull("photo") ||
+                rawMimeType?.startsWith("image/", ignoreCase = true) == true ||
                 isImageExtension
             )
 
             val isVideo = !isFolder && !isImage && (
-                obj.has("video") ||
-                rawMimeType?.startsWith("video/") == true ||
+                !obj.isNull("video") ||
+                rawMimeType?.startsWith("video/", ignoreCase = true) == true ||
                 isVideoExtension
             )
 
@@ -161,12 +169,12 @@ class OneDriveGraphClientImpl @Inject constructor(
 
             // Extract best timestamp: photo.takenDateTime > fileSystemInfo.createdDateTime > createdDateTime > fileSystemInfo.lastModifiedDateTime > lastModifiedDateTime
             val photoObj = obj.optJSONObject("photo")
-            val takenTimeStr = photoObj?.optString("takenDateTime")?.takeIf { it.isNotBlank() }
+            val takenTimeStr = photoObj?.optNonBlankString("takenDateTime")
             val fsObj = obj.optJSONObject("fileSystemInfo")
-            val fsCreatedStr = fsObj?.optString("createdDateTime")?.takeIf { it.isNotBlank() }
-            val topCreatedStr = obj.optString("createdDateTime").takeIf { it.isNotBlank() }
-            val fsModifiedStr = fsObj?.optString("lastModifiedDateTime")?.takeIf { it.isNotBlank() }
-            val topModifiedStr = obj.optString("lastModifiedDateTime").takeIf { it.isNotBlank() }
+            val fsCreatedStr = fsObj?.optNonBlankString("createdDateTime")
+            val topCreatedStr = obj.optNonBlankString("createdDateTime")
+            val fsModifiedStr = fsObj?.optNonBlankString("lastModifiedDateTime")
+            val topModifiedStr = obj.optNonBlankString("lastModifiedDateTime")
 
             val bestTimestampStr = takenTimeStr
                 ?: fsCreatedStr
@@ -180,17 +188,18 @@ class OneDriveGraphClientImpl @Inject constructor(
                 null
             }
 
-            // Thumbnails - prefer 'large' for crisp, high-quality rendering
+            // Thumbnails - prefer 'large' for crisp, high-quality rendering, skipping blank/null URLs
             var thumbnailUrl: String? = null
             val thumbsArray = obj.optJSONArray("thumbnails")
             if (thumbsArray != null && thumbsArray.length() > 0) {
-                val thumbSet = thumbsArray.getJSONObject(0)
-                val large = thumbSet.optJSONObject("large")
-                val medium = thumbSet.optJSONObject("medium")
-                thumbnailUrl = (large ?: medium)?.optString("url")
+                val thumbSet = thumbsArray.optJSONObject(0)
+                val largeUrl = thumbSet?.optJSONObject("large")?.optNonBlankString("url")
+                val mediumUrl = thumbSet?.optJSONObject("medium")?.optNonBlankString("url")
+                val smallUrl = thumbSet?.optJSONObject("small")?.optNonBlankString("url")
+                thumbnailUrl = largeUrl ?: mediumUrl ?: smallUrl
             }
 
-            val downloadUrl = obj.optString("@microsoft.graph.downloadUrl").takeIf { it.isNotEmpty() }
+            val downloadUrl = obj.optNonBlankString("@microsoft.graph.downloadUrl")
 
             // High-quality thumbnail: prefer expanded 'large' preview (available from /children calls),
             // then the stable authenticated Graph thumbnail endpoint. Never fall back to the expiring
@@ -381,7 +390,7 @@ class OneDriveGraphClientImpl @Inject constructor(
                 if (!resp.isSuccessful) {
                     return Result.failure(IOException("Create upload session failed: ${resp.code} ${resp.message}"))
                 }
-                JSONObject(resp.body?.string() ?: "").optString("uploadUrl").takeIf { it.isNotEmpty() }
+                JSONObject(resp.body?.string() ?: "").optNonBlankString("uploadUrl")
                     ?: return Result.failure(IOException("Missing uploadUrl from Graph session"))
             }
         } catch (e: Exception) {

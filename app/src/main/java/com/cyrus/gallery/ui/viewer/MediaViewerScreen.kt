@@ -241,7 +241,7 @@ private fun MediaViewerContent(
     // Track active page zoom so horizontal pager gestures don't conflict with zoom/pan
     var currentScale by remember { mutableFloatStateOf(1f) }
 
-    LaunchedEffect(pagerState.currentPage) {
+    LaunchedEffect(currentItem.id) {
         currentScale = 1f
     }
 
@@ -253,10 +253,11 @@ private fun MediaViewerContent(
         // Horizontal Pager for swiping left & right
         HorizontalPager(
             state = pagerState,
+            key = { page -> items.getOrNull(page)?.id ?: page },
             modifier = Modifier.fillMaxSize(),
             userScrollEnabled = currentScale <= 1.05f,
         ) { page ->
-            val pageItem = items[page]
+            val pageItem = items.getOrNull(page) ?: return@HorizontalPager
             val isCurrentPage = page == pagerState.currentPage
 
             if (pageItem.type == MediaType.VIDEO) {
@@ -412,20 +413,24 @@ private fun ZoomableImagePage(
     onToggleControls: () -> Unit,
     onScaleChanged: (Float) -> Unit,
 ) {
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
+    var scale by remember(item.id) { mutableFloatStateOf(1f) }
+    var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
+    var offsetY by remember(item.id) { mutableFloatStateOf(0f) }
+    val latestOnToggleControls by rememberUpdatedState(onToggleControls)
+    val latestOnScaleChanged by rememberUpdatedState(onScaleChanged)
 
-    LaunchedEffect(isCurrentPage) {
+    LaunchedEffect(item.id, isCurrentPage) {
         if (!isCurrentPage) {
             scale = 1f
             offsetX = 0f
             offsetY = 0f
-            onScaleChanged(1f)
+            latestOnScaleChanged(1f)
         }
     }
 
-    val lowResPainter = item.thumbnailUrl?.let { rememberAsyncImagePainter(it) }
+    // Call rememberAsyncImagePainter unconditionally (skipping network load when localContentUri already exists)
+    val lowResModel = if (item.localContentUri == null) item.thumbnailUrl else null
+    val lowResPainter = rememberAsyncImagePainter(model = lowResModel)
     var useGraphContentFallback by remember(item.id) { mutableStateOf(false) }
     val imageModel = item.localContentUri
         ?: if (useGraphContentFallback && item.oneDriveItemId != null) {
@@ -437,11 +442,11 @@ private fun ZoomableImagePage(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(Unit) {
+            .pointerInput(item.id) {
                 coroutineScope {
                     launch {
                         detectTapGestures(
-                            onTap = { onToggleControls() },
+                            onTap = { latestOnToggleControls() },
                             onDoubleTap = {
                                 if (scale > 1f) {
                                     scale = 1f
@@ -450,14 +455,14 @@ private fun ZoomableImagePage(
                                 } else {
                                     scale = 2.5f
                                 }
-                                onScaleChanged(scale)
+                                latestOnScaleChanged(scale)
                             },
                         )
                     }
                     launch {
                         detectTransformGestures { _, pan, zoom, _ ->
                             scale = (scale * zoom).coerceIn(1f, 5f)
-                            onScaleChanged(scale)
+                            latestOnScaleChanged(scale)
                             if (scale > 1f) {
                                 // Clamp offset so the image cannot be dragged completely off-screen
                                 val maxOffsetX = size.width * (scale - 1f) / 2f
@@ -506,6 +511,7 @@ private fun VideoPage(
     onToggleControls: () -> Unit,
 ) {
     val context = LocalContext.current
+    val latestOnToggleControls by rememberUpdatedState(onToggleControls)
     var isStreamingRequested by remember(item.id) { mutableStateOf(false) }
     val effectiveMediaUri = item.localContentUri
         ?: (if (isStreamingRequested) {
@@ -515,19 +521,40 @@ private fun VideoPage(
         } else null)
 
     if (effectiveMediaUri != null) {
-        val exoPlayer = remember(effectiveMediaUri) {
+        // Keep one ExoPlayer per video item so switching from remote stream to newly downloaded
+        // local file swaps the MediaItem seamlessly while preserving playback position and state.
+        val exoPlayer = remember(item.id) {
             val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
             ExoPlayer.Builder(context)
                 .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
                 .build()
-                .apply {
-                    setMediaItem(ExoMediaItem.fromUri(effectiveMediaUri))
-                    prepare()
-                    playWhenReady = isCurrentPage
+        }
+        var loadedMediaUri by remember(item.id) { mutableStateOf<android.net.Uri?>(null) }
+
+        LaunchedEffect(exoPlayer, effectiveMediaUri) {
+            if (loadedMediaUri != effectiveMediaUri) {
+                val isSwitchingSource = loadedMediaUri != null
+                val resumePositionMs = if (isSwitchingSource) {
+                    exoPlayer.currentPosition.coerceAtLeast(0L)
+                } else {
+                    0L
                 }
+                val shouldPlay = if (isSwitchingSource) {
+                    exoPlayer.playWhenReady && isCurrentPage
+                } else {
+                    isCurrentPage
+                }
+                exoPlayer.setMediaItem(ExoMediaItem.fromUri(effectiveMediaUri))
+                if (resumePositionMs > 0L) {
+                    exoPlayer.seekTo(resumePositionMs)
+                }
+                exoPlayer.prepare()
+                exoPlayer.playWhenReady = shouldPlay
+                loadedMediaUri = effectiveMediaUri
+            }
         }
 
-        LaunchedEffect(isCurrentPage) {
+        LaunchedEffect(exoPlayer, isCurrentPage) {
             exoPlayer.playWhenReady = isCurrentPage
         }
 
@@ -542,8 +569,8 @@ private fun VideoPage(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures(onTap = { onToggleControls() })
+                .pointerInput(item.id) {
+                    detectTapGestures(onTap = { latestOnToggleControls() })
                 },
         ) {
             AndroidView(
@@ -553,6 +580,14 @@ private fun VideoPage(
                         useController = true
                     }
                 },
+                update = { playerView ->
+                    if (playerView.player !== exoPlayer) {
+                        playerView.player = exoPlayer
+                    }
+                },
+                onRelease = { playerView ->
+                    playerView.player = null
+                },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -561,8 +596,8 @@ private fun VideoPage(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures(onTap = { onToggleControls() })
+                .pointerInput(item.id) {
+                    detectTapGestures(onTap = { latestOnToggleControls() })
                 },
             contentAlignment = Alignment.Center,
         ) {
