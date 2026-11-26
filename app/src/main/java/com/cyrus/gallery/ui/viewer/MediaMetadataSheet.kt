@@ -2,6 +2,7 @@ package com.cyrus.gallery.ui.viewer
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,6 +36,7 @@ import androidx.exifinterface.media.ExifInterface
 import com.cyrus.gallery.domain.model.CloudStorageState
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.MediaSource
+import com.cyrus.gallery.domain.model.MediaType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.ZoneId
@@ -49,6 +51,7 @@ data class ExifDetails(
     val focalLength: String? = null,
     val width: Int = 0,
     val height: Int = 0,
+    val durationMillis: Long? = null,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,12 +62,17 @@ fun MediaMetadataSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val exifState by produceState<ExifDetails?>(initialValue = null, item.localContentUri) {
+    val exifState by produceState<ExifDetails?>(initialValue = null, item.id, item.localContentUri, item.type) {
         value = withContext(Dispatchers.IO) {
-            readExif(context, item.localContentUri)
+            when (item.type) {
+                MediaType.VIDEO -> readVideoDetails(context, item.localContentUri)
+                MediaType.IMAGE -> readExif(context, item.localContentUri)
+            }
         }
     }
     val exif = exifState
+    val effectiveDurationMillis = item.durationMillis?.takeIf { it > 0L }
+        ?: exif?.durationMillis?.takeIf { it > 0L }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -95,7 +103,7 @@ fun MediaMetadataSheet(
                 subtext = "Created timestamp",
             )
 
-            // Storage Source & Status
+            // Storage Source & Folder / Album Name
             val sourceLabel = when (item.source) {
                 MediaSource.LOCAL -> "Stored locally on device"
                 MediaSource.ONEDRIVE -> when (item.cloudStorageState) {
@@ -104,28 +112,46 @@ fun MediaMetadataSheet(
                     CloudStorageState.REMOTE_ONLY, null -> "OneDrive (Cloud only)"
                 }
             }
+            val locationLabel = item.albumName?.takeIf { it.isNotBlank() }
+                ?: if (item.source == MediaSource.ONEDRIVE) "OneDrive Root" else "Library"
             MetadataRow(
                 icon = if (item.source == MediaSource.LOCAL) Icons.Outlined.Smartphone else Icons.Outlined.Cloud,
                 label = sourceLabel,
-                subtext = item.albumName ?: "Library",
+                subtext = locationLabel,
             )
 
-            // Camera / EXIF info if available
-            if (exif != null && (!exif.cameraModel.isNullOrEmpty() || exif.width > 0)) {
+            val hasDuration = item.type == MediaType.VIDEO && effectiveDurationMillis != null
+            val hasCameraInfo = exif != null && !exif.cameraModel.isNullOrEmpty()
+            val hasDimensions = exif != null && exif.width > 0 && exif.height > 0
+
+            // Media-specific details (video duration, EXIF camera specs, dimensions)
+            if (hasDuration || hasCameraInfo || hasDimensions) {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-                if (!exif.cameraModel.isNullOrEmpty()) {
+                if (hasDuration) {
+                    MetadataRow(
+                        icon = Icons.Outlined.Schedule,
+                        label = formatMediaDuration(effectiveDurationMillis!!),
+                        subtext = "Duration",
+                    )
+                }
+                if (hasCameraInfo) {
                     MetadataRow(
                         icon = Icons.Outlined.Camera,
-                        label = exif.cameraModel,
+                        label = exif!!.cameraModel!!,
                         subtext = listOfNotNull(exif.aperture, exif.exposureTime, exif.iso, exif.focalLength).joinToString(" · "),
                     )
                 }
-                if (exif.width > 0 && exif.height > 0) {
-                    val megapixels = String.format(Locale.US, "%.1f MP", (exif.width * exif.height) / 1_000_000.0)
+                if (hasDimensions) {
+                    val resolutionLabel = if (item.type == MediaType.VIDEO) {
+                        "${exif!!.width} × ${exif.height}"
+                    } else {
+                        val megapixels = String.format(Locale.US, "%.1f MP", (exif!!.width * exif.height) / 1_000_000.0)
+                        "${exif.width} × ${exif.height} ($megapixels)"
+                    }
                     MetadataRow(
                         icon = Icons.Outlined.Folder,
-                        label = "${exif.width} × ${exif.height} ($megapixels)",
-                        subtext = "Resolution",
+                        label = resolutionLabel,
+                        subtext = if (item.type == MediaType.VIDEO) "Video resolution" else "Resolution",
                     )
                 }
             }
@@ -153,6 +179,46 @@ private fun MetadataRow(
             Text(label, style = MaterialTheme.typography.bodyLarge)
             Text(subtext, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+internal fun formatMediaDuration(durationMillis: Long): String {
+    val totalSeconds = (durationMillis / 1_000L).coerceAtLeast(0L)
+    val hours = totalSeconds / 3_600L
+    val minutes = (totalSeconds % 3_600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0L) {
+        String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format(Locale.US, "%d:%02d", minutes, seconds)
+    }
+}
+
+private fun readVideoDetails(context: Context, uri: Uri?): ExifDetails? {
+    if (uri == null) return null
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(context, uri)
+        val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            ?.toLongOrNull()
+            ?.takeIf { it > 0L }
+        val rawWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+        val rawHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+        val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+        val (width, height) = if (rotation == 90 || rotation == 270) {
+            rawHeight to rawWidth
+        } else {
+            rawWidth to rawHeight
+        }
+        ExifDetails(
+            width = width,
+            height = height,
+            durationMillis = duration,
+        )
+    } catch (_: Exception) {
+        null
+    } finally {
+        runCatching { retriever.release() }
     }
 }
 

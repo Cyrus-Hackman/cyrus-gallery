@@ -34,11 +34,12 @@ class UnifiedGalleryRepository @Inject constructor(
         return combine(
             localRepository.observeMedia(),
             oneDriveRepository.cloudItems,
+            oneDriveRepository.cloudFolders,
             cacheDao.observeAll(),
             favoriteDao.observeFavoriteIds(),
-        ) { localItems, cloudItems, cachedEntities, favoriteIds ->
+        ) { localItems, cloudItems, cloudFolders, cachedEntities, favoriteIds ->
             val favSet = favoriteIds.toSet()
-            val enrichedCloudItems = enrichCloudItems(cloudItems, cachedEntities, favSet)
+            val enrichedCloudItems = enrichCloudItems(cloudItems, cachedEntities, favSet, cloudFolders)
             mergeUnifiedMedia(localItems, enrichedCloudItems, favSet)
         }
     }
@@ -47,15 +48,17 @@ class UnifiedGalleryRepository @Inject constructor(
         return combine(
             localRepository.observeMedia(),
             oneDriveRepository.cloudItems,
+            oneDriveRepository.cloudFolders,
             cacheDao.observeAll(),
             favoriteDao.observeFavoriteIds(),
-        ) { localItems, cloudItems, cachedEntities, favoriteIds ->
+        ) { localItems, cloudItems, cloudFolders, cachedEntities, favoriteIds ->
             val favSet = favoriteIds.toSet()
             if (favSet.isEmpty()) return@combine emptyList()
             val favCloud = enrichCloudItems(
                 cloudItems.filter { it.id in favSet },
                 cachedEntities,
                 favSet,
+                cloudFolders,
             )
             buildFavoriteMedia(localItems, favCloud, favSet)
         }
@@ -64,10 +67,11 @@ class UnifiedGalleryRepository @Inject constructor(
     override fun observeCloudMedia(): Flow<List<MediaItem>> {
         return combine(
             oneDriveRepository.cloudItems,
+            oneDriveRepository.cloudFolders,
             cacheDao.observeAll(),
             favoriteDao.observeFavoriteIds(),
-        ) { cloudItems, cachedEntities, favoriteIds ->
-            enrichCloudItems(cloudItems, cachedEntities, favoriteIds.toSet())
+        ) { cloudItems, cloudFolders, cachedEntities, favoriteIds ->
+            enrichCloudItems(cloudItems, cachedEntities, favoriteIds.toSet(), cloudFolders)
         }
     }
 
@@ -75,11 +79,14 @@ class UnifiedGalleryRepository @Inject constructor(
         cloudItems: List<MediaItem>,
         cachedEntities: List<CloudMediaCacheEntity>,
         favSet: Set<String>,
+        cloudFolders: List<Album> = emptyList(),
     ): List<MediaItem> {
         val cacheEntityMap = cachedEntities.associateBy { it.oneDriveItemId }
+        val folderNameById = cloudFolders.associate { it.id to it.name }
         return cloudItems.map { cloudItem ->
             val entity = cloudItem.oneDriveItemId?.let { cacheEntityMap[it] }
             val isFav = cloudItem.id in favSet
+            val resolvedAlbumName = cloudItem.albumName ?: cloudItem.albumId?.let { folderNameById[it] }
             if (entity != null) {
                 val localFile = entity.localCachedPath?.let { File(it) }
                 val hasLocalFile = localFile != null && localFile.exists()
@@ -91,9 +98,13 @@ class UnifiedGalleryRepository @Inject constructor(
                         ?: entity.thumbnailCachedPath?.takeIf { it.isNotBlank() },
                     highResUrl = cloudItem.highResUrl ?: "https://graph.microsoft.com/v1.0/me/drive/items/${cloudItem.oneDriveItemId}/content",
                     isFavourite = isFav,
+                    albumName = resolvedAlbumName,
                 )
             } else {
-                cloudItem.copy(isFavourite = isFav)
+                cloudItem.copy(
+                    isFavourite = isFav,
+                    albumName = resolvedAlbumName,
+                )
             }
         }
     }

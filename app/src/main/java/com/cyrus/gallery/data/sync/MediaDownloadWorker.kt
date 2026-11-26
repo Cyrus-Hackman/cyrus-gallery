@@ -48,13 +48,14 @@ class MediaDownloadWorker @AssistedInject constructor(
 
         val token = authManager.getAccessToken() ?: return@withContext Result.retry()
 
-        // Re-read the current pin state from Room — the enqueue-time input data may be stale if the
-        // user toggled pin after the work request was already queued but before it started running.
-        val currentEntity = cacheDao.find(driveId, itemId)
+        // Re-read the current pin state from Room (look up by itemId first, matching CloudCacheRepositoryImpl)
+        // because enqueue-time input data may be stale if pin state toggled after work was queued.
+        val currentEntity = cacheDao.findByItemId(itemId) ?: cacheDao.find(driveId, itemId)
         val effectiveIsPinned = when (currentEntity?.storageState) {
             CloudStorageState.PINNED_OFFLINE -> true
             else -> isPinned
         }
+        val effectiveSizeBytes = if (sizeBytes > 0L) sizeBytes else (currentEntity?.originalSizeBytes ?: 0L)
         // Preserve the existing localCachedPath so that a concurrent delta sync that reads from the DB
         // between now and download completion does not see a spurious null path and demote the item.
         val existingPath = currentEntity?.localCachedPath
@@ -96,7 +97,7 @@ class MediaDownloadWorker @AssistedInject constructor(
                     type = type,
                     isPinned = effectiveIsPinned,
                     sourceStream = body.byteStream(),
-                    expectedSizeBytes = if (sizeBytes > 0) sizeBytes else null,
+                    expectedSizeBytes = if (effectiveSizeBytes > 0L) effectiveSizeBytes else null,
                 )
 
                 val targetState = if (effectiveIsPinned) CloudStorageState.PINNED_OFFLINE else CloudStorageState.CACHED

@@ -72,6 +72,27 @@ class MediaViewerViewModel @Inject constructor(
     private val _pendingLocalDelete = MutableStateFlow<PendingLocalDelete?>(null)
     val pendingLocalDelete: StateFlow<PendingLocalDelete?> = _pendingLocalDelete.asStateFlow()
 
+    private var activeSessionSeq: Int = -1
+    private var sessionGeneration: Long = 0L
+
+    fun beginSession(sessionSeq: Int) {
+        if (sessionSeq <= 0 || sessionSeq != activeSessionSeq) {
+            activeSessionSeq = sessionSeq
+            sessionGeneration++
+            _statusMessage.value = null
+            _pendingLocalDelete.value = null
+        }
+    }
+
+    fun endSession(sessionSeq: Int) {
+        if (sessionSeq <= 0 || sessionSeq == activeSessionSeq) {
+            sessionGeneration++
+            // Clear transient snackbars on exit; keep pendingLocalDelete until the next session starts
+            // so rotating while the system delete dialog is open does not drop the confirmation callback.
+            _statusMessage.value = null
+        }
+    }
+
     // Starts as null until Room emits so static callers avoid an un-favorited 1-frame flicker while still allowing un-favoriting
     val favoriteIds: StateFlow<Set<String>?> = favoriteDao.observeFavoriteIds()
         .map<List<String>, Set<String>?> { it.toSet() }
@@ -136,8 +157,15 @@ class MediaViewerViewModel @Inject constructor(
         }
     }
 
+    private fun postStatusIfSameSession(startGen: Long, message: String) {
+        if (sessionGeneration == startGen) {
+            _statusMessage.value = message
+        }
+    }
+
     fun togglePinned(item: MediaItem) {
         val itemId = item.oneDriveItemId ?: return
+        val startGen = sessionGeneration
         viewModelScope.launch {
             val isCurrentlyPinned = item.cloudStorageState == CloudStorageState.PINNED_OFFLINE
             val targetPinned = !isCurrentlyPinned
@@ -155,38 +183,42 @@ class MediaViewerViewModel @Inject constructor(
                     isPinned = true,
                 )
             }
-            _statusMessage.value = if (targetPinned) "Pinned for offline viewing" else "Unpinned"
+            postStatusIfSameSession(startGen, if (targetPinned) "Pinned for offline viewing" else "Unpinned")
         }
     }
 
     fun downloadOnDemand(item: MediaItem) {
         val itemId = item.oneDriveItemId ?: return
+        val startGen = sessionGeneration
         viewModelScope.launch {
+            val entity = cacheRepository.findByItemId(itemId)
             syncManager.enqueueDownload(
                 itemId = itemId,
                 driveId = item.albumId ?: "root",
                 fileName = item.displayName,
                 mimeType = item.mimeType,
-                sizeBytes = 0L,
+                sizeBytes = entity?.originalSizeBytes ?: 0L,
                 isPinned = false,
             )
-            _statusMessage.value = "Downloading ${item.displayName}..."
+            postStatusIfSameSession(startGen, "Downloading ${item.displayName}...")
         }
     }
 
     fun uploadToOneDrive(item: MediaItem) {
+        val startGen = sessionGeneration
         viewModelScope.launch {
-            _statusMessage.value = "Uploading to OneDrive..."
+            postStatusIfSameSession(startGen, "Uploading to OneDrive...")
             val result = repository.uploadToOneDrive(item)
             if (result.isSuccess) {
-                _statusMessage.value = "Uploaded successfully to OneDrive"
+                postStatusIfSameSession(startGen, "Uploaded successfully to OneDrive")
             } else {
-                _statusMessage.value = "Upload failed: ${result.exceptionOrNull()?.message}"
+                postStatusIfSameSession(startGen, "Upload failed: ${result.exceptionOrNull()?.message}")
             }
         }
     }
 
     fun deleteMedia(item: MediaItem, target: DeleteTarget, onDeleted: () -> Unit) {
+        val startGen = sessionGeneration
         viewModelScope.launch {
             when (target) {
                 DeleteTarget.LOCAL_DEVICE -> {
@@ -196,14 +228,16 @@ class MediaViewerViewModel @Inject constructor(
                     } else {
                         val permissionEx = result.exceptionOrNull() as? MediaDeletePermissionRequiredException
                         if (permissionEx != null) {
-                            _pendingLocalDelete.value = PendingLocalDelete(
-                                item = item,
-                                intentSender = permissionEx.intentSender,
-                                requiresManualRetryAfterGrant = permissionEx.requiresManualRetryAfterGrant,
-                                onDeleted = onDeleted,
-                            )
+                            if (sessionGeneration == startGen) {
+                                _pendingLocalDelete.value = PendingLocalDelete(
+                                    item = item,
+                                    intentSender = permissionEx.intentSender,
+                                    requiresManualRetryAfterGrant = permissionEx.requiresManualRetryAfterGrant,
+                                    onDeleted = onDeleted,
+                                )
+                            }
                         } else {
-                            _statusMessage.value = "Delete failed: ${result.exceptionOrNull()?.message}"
+                            postStatusIfSameSession(startGen, "Delete failed: ${result.exceptionOrNull()?.message}")
                         }
                     }
                 }
@@ -214,13 +248,13 @@ class MediaViewerViewModel @Inject constructor(
                     } else {
                         item.localContentUri?.path?.let { storageManager.deleteManagedLocalCopySafely(it) }
                     }
-                    _statusMessage.value = "Cached file removed from device"
+                    postStatusIfSameSession(startGen, "Cached file removed from device")
                     onDeleted()
                 }
                 DeleteTarget.ONEDRIVE_PERMANENT -> {
                     val result = repository.deleteCloudMedia(item)
                     if (result.isSuccess) onDeleted()
-                    else _statusMessage.value = "Cloud deletion failed: ${result.exceptionOrNull()?.message}"
+                    else postStatusIfSameSession(startGen, "Cloud deletion failed: ${result.exceptionOrNull()?.message}")
                 }
             }
         }

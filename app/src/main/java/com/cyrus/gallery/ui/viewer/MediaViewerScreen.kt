@@ -102,8 +102,17 @@ fun MediaViewerScreen(
     config: ViewerSessionConfig,
     onCurrentItemChanged: (String) -> Unit,
     onBack: () -> Unit,
+    sessionSeq: Int = 0,
     viewModel: MediaViewerViewModel = hiltViewModel(),
 ) {
+    remember(viewModel, sessionSeq) {
+        viewModel.beginSession(sessionSeq)
+        true
+    }
+    DisposableEffect(viewModel, sessionSeq) {
+        onDispose { viewModel.endSession(sessionSeq) }
+    }
+
     val liveItemsFlow = remember(
         config.sourceRoute,
         config.searchQuery,
@@ -148,6 +157,13 @@ fun MediaViewerScreen(
     viewModel: MediaViewerViewModel = hiltViewModel(),
 ) {
     if (items.isEmpty()) return
+    remember(viewModel) {
+        viewModel.beginSession(0)
+        true
+    }
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.endSession(0) }
+    }
     val clampedIndex = initialIndex.coerceIn(0, items.size - 1)
     MediaViewerContent(
         items = items,

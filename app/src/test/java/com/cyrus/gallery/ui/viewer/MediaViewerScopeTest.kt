@@ -113,4 +113,11 @@ class MediaViewerScopeTest {
 
         assertEquals(listOf("onedrive:c_dup", "onedrive:c_unfav"), result.map { it.id })
     }
+
+    @Test
+    fun `formatMediaDuration formats seconds minutes and hours consistently`() {
+        assertEquals("0:05", formatMediaDuration(5_200L))
+        assertEquals("1:35", formatMediaDuration(95_400L))
+        assertEquals("1:05:09", formatMediaDuration(3_909_000L))
+    }
 }

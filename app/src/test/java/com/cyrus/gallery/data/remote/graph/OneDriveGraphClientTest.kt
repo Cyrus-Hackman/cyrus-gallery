@@ -339,4 +339,37 @@ class OneDriveGraphClientTest {
         assertEquals("https://example.com/thumb_medium.jpg", item.thumbnailUrl)
         assertEquals("folder_parent_1", item.parentFolderId)
     }
+
+    @Test
+    fun `parseDriveItem extracts positive video durationMillis and ignores missing or non-positive values`() {
+        val videoWithDuration = JSONObject(
+            """
+            {
+                "id": "vid_1",
+                "name": "Clip.mp4",
+                "size": 4096,
+                "video": { "duration": 95400, "width": 1920, "height": 1080 },
+                "file": { "mimeType": "video/mp4" }
+            }
+            """.trimIndent(),
+        )
+        val parsedWithDuration = OneDriveGraphClientImpl.parseDriveItem(videoWithDuration)
+        assertNotNull(parsedWithDuration)
+        assertEquals(95_400L, parsedWithDuration!!.durationMillis)
+
+        val videoWithoutDuration = JSONObject(
+            """
+            {
+                "id": "vid_2",
+                "name": "Clip2.mp4",
+                "size": 4096,
+                "video": { "duration": 0 },
+                "file": { "mimeType": "video/mp4" }
+            }
+            """.trimIndent(),
+        )
+        val parsedWithoutDuration = OneDriveGraphClientImpl.parseDriveItem(videoWithoutDuration)
+        assertNotNull(parsedWithoutDuration)
+        assertNull(parsedWithoutDuration!!.durationMillis)
+    }
 }

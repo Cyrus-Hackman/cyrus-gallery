@@ -158,6 +158,7 @@ fun CyrusGalleryApp() {
                         viewerSelectedItemId = newId
                     },
                     onBack = onDismissViewer,
+                    sessionSeq = viewerSessionSeq,
                 )
             }
         }

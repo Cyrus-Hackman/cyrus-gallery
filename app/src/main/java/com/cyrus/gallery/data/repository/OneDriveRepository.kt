@@ -94,6 +94,9 @@ class OneDriveRepository @Inject constructor(
                     _cloudItems.value = cachedEntities.map { entity ->
                         val isVideo = entity.mimeType.startsWith("video/")
                         val itemDate = (entity.createdAtMillis ?: entity.lastSynchronizedAtMillis)?.let { java.time.Instant.ofEpochMilli(it) }
+                        val folderName = entity.driveId.takeIf { it.isNotBlank() && it != "root" }?.let { id ->
+                            _cloudFolders.value.find { it.id == id }?.name
+                        }
                         MediaItem(
                             id = "onedrive:${entity.oneDriveItemId}",
                             displayName = entity.fileName,
@@ -108,6 +111,7 @@ class OneDriveRepository @Inject constructor(
                             highResUrl = "https://graph.microsoft.com/v1.0/me/drive/items/${entity.oneDriveItemId}/content",
                             cloudStorageState = entity.storageState,
                             albumId = entity.driveId.takeIf { it.isNotBlank() && it != "root" },
+                            albumName = folderName,
                         )
                     }.sortedByDescending { it.createdAt ?: java.time.Instant.EPOCH }
                 }
@@ -119,6 +123,9 @@ class OneDriveRepository @Inject constructor(
 
     private fun GraphDriveItem.toMediaItem(albumIdOverride: String? = parentFolderId): MediaItem {
         val mediaType = if (isVideo) MediaType.VIDEO else MediaType.IMAGE
+        val resolvedAlbumName = albumIdOverride?.let { folderId ->
+            _cloudFolders.value.find { it.id == folderId }?.name
+        }
         return MediaItem(
             id = "onedrive:$id",
             displayName = name,
@@ -131,7 +138,9 @@ class OneDriveRepository @Inject constructor(
             thumbnailUrl = thumbnailUrl,
             highResUrl = downloadUrl ?: "https://graph.microsoft.com/v1.0/me/drive/items/$id/content",
             cloudStorageState = CloudStorageState.REMOTE_ONLY,
+            durationMillis = durationMillis,
             albumId = albumIdOverride,
+            albumName = resolvedAlbumName,
         )
     }
 

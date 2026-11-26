@@ -91,14 +91,13 @@ class CloudCacheRepositoryImpl @Inject constructor(
     override suspend fun clearTemporaryCache(): CacheClearResult = withContext(Dispatchers.IO) {
         val (reclaimedBytes, removedCount) = storageManager.clearAllTemporaryCache()
 
-        // Update database records: only CACHED items become REMOTE_ONLY (PINNED_OFFLINE remains untouched)
+        // Reset CACHED rows after temporary files are removed (PINNED_OFFLINE remains untouched)
         val evictable = cacheDao.getEvictableItems()
+        val now = System.currentTimeMillis()
         for (item in evictable) {
-            cacheDao.updateStorageState(
+            cacheDao.clearLocalCopyState(
                 cacheId = item.cacheId,
-                state = CloudStorageState.REMOTE_ONLY,
-                path = null,
-                accessedTime = System.currentTimeMillis(),
+                accessedTime = now,
             )
         }
 
@@ -123,15 +122,24 @@ class CloudCacheRepositoryImpl @Inject constructor(
 
             if (isExpired || isOverCapacity) {
                 val path = item.localCachedPath
-                if (!path.isNullOrEmpty() && storageManager.deleteCachedFileSafely(path)) {
-                    val size = item.originalSizeBytes
-                    reclaimed += size
+                if (path.isNullOrEmpty()) {
+                    cacheDao.clearLocalCopyState(item.cacheId, System.currentTimeMillis())
+                    continue
+                }
+                val file = File(path)
+                if (!file.exists()) {
+                    // Clean up orphaned DB cache state if file was already removed from disk
+                    cacheDao.clearLocalCopyState(item.cacheId, System.currentTimeMillis())
+                    continue
+                }
+                val actualFileBytes = file.length()
+                if (storageManager.deleteCachedFileSafely(path)) {
+                    val reclaimedSize = resolveEvictedBytes(actualFileBytes, item.originalSizeBytes)
+                    reclaimed += reclaimedSize
                     removed++
-                    runningBytes -= size
-                    cacheDao.updateStorageState(
+                    runningBytes = (runningBytes - reclaimedSize).coerceAtLeast(0L)
+                    cacheDao.clearLocalCopyState(
                         cacheId = item.cacheId,
-                        state = CloudStorageState.REMOTE_ONLY,
-                        path = null,
                         accessedTime = System.currentTimeMillis(),
                     )
                 }
@@ -139,5 +147,10 @@ class CloudCacheRepositoryImpl @Inject constructor(
         }
 
         CacheClearResult(reclaimedBytes = reclaimed, removedFiles = removed)
+    }
+
+    companion object {
+        internal fun resolveEvictedBytes(actualFileBytes: Long, fallbackOriginalBytes: Long): Long =
+            if (actualFileBytes > 0L) actualFileBytes else fallbackOriginalBytes.coerceAtLeast(0L)
     }
 }

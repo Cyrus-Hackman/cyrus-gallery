@@ -32,6 +32,7 @@ data class GraphDriveItem(
     val thumbnailUrl: String? = null,
     val downloadUrl: String? = null,
     val parentFolderId: String? = null,
+    val durationMillis: Long? = null,
 )
 
 data class GraphPagedResult(
@@ -200,6 +201,9 @@ class OneDriveGraphClientImpl @Inject constructor(
             }
 
             val downloadUrl = obj.optNonBlankString("@microsoft.graph.downloadUrl")
+            val durationMillis = obj.optJSONObject("video")
+                ?.optLong("duration", -1L)
+                ?.takeIf { it > 0L }
 
             // High-quality thumbnail: prefer expanded 'large' preview (available from /children calls),
             // then the stable authenticated Graph thumbnail endpoint. Never fall back to the expiring
@@ -224,6 +228,7 @@ class OneDriveGraphClientImpl @Inject constructor(
                 thumbnailUrl = effectiveThumbnailUrl,
                 downloadUrl = downloadUrl,
                 parentFolderId = parentFolderId,
+                durationMillis = durationMillis,
             )
         }
     }
