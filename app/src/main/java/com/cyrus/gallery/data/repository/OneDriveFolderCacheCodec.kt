@@ -2,6 +2,8 @@ package com.cyrus.gallery.data.repository
 
 import com.cyrus.gallery.domain.model.Album
 import com.cyrus.gallery.domain.model.MediaSource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -68,7 +70,7 @@ internal object OneDriveFolderCacheCodec {
         return runCatching { decode(file.readText()) }.getOrDefault(emptyList())
     }
 
-    fun writeToFileAtomically(file: File, folders: List<Album>) {
+    suspend fun writeToFileAtomically(file: File, folders: List<Album>) = withContext(Dispatchers.IO) {
         val parent = file.parentFile
         if (parent != null && !parent.exists()) parent.mkdirs()
         val tempFile = File(parent, "${file.name}.tmp")
@@ -78,6 +80,7 @@ internal object OneDriveFolderCacheCodec {
             tempFile.copyTo(file, overwrite = true)
             tempFile.delete()
         }
+        Unit
     }
 
     private fun List<Album>.filterEligibleCloudFolders(): List<Album> = filterNot { folder ->

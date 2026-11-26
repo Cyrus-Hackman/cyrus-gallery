@@ -142,4 +142,76 @@ class OneDriveGraphClientTest {
         val isVideoExtension = videoExt in setOf("mp4", "mov", "mkv")
         assertTrue(isVideoExtension)
     }
+
+    @Test
+    fun `parseDeltaResult excludes root drive item while keeping top-level and nested folders`() {
+        val deltaJson = """
+        {
+            "value": [
+                {
+                    "id": "drive_root_0",
+                    "name": "root",
+                    "folder": { "childCount": 3 },
+                    "root": {}
+                },
+                {
+                    "id": "drive_root_no_facet",
+                    "name": "root",
+                    "folder": { "childCount": 3 }
+                },
+                {
+                    "id": "folder_pictures",
+                    "name": "Pictures",
+                    "folder": { "childCount": 2 },
+                    "parentReference": { "id": "drive_root_0" }
+                },
+                {
+                    "id": "folder_named_root_child",
+                    "name": "root",
+                    "folder": { "childCount": 1 },
+                    "parentReference": { "id": "folder_pictures" }
+                },
+                {
+                    "id": "photo_1",
+                    "name": "IMG_001.jpg",
+                    "size": 12345,
+                    "image": {},
+                    "file": { "mimeType": "image/jpeg" },
+                    "parentReference": { "id": "folder_pictures" }
+                }
+            ],
+            "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=next1"
+        }
+        """.trimIndent()
+
+        val result = OneDriveGraphClientImpl.parseDeltaResult(deltaJson)
+
+        val folderIds = result.items.filter { it.isFolder }.map { it.id }
+        assertEquals(listOf("folder_pictures", "folder_named_root_child"), folderIds)
+        assertFalse(folderIds.contains("drive_root_0"))
+        assertFalse(folderIds.contains("drive_root_no_facet"))
+
+        val photo = result.items.firstOrNull { it.id == "photo_1" }
+        assertNotNull(photo)
+        assertEquals("folder_pictures", photo?.parentFolderId)
+        assertEquals("https://graph.microsoft.com/v1.0/me/drive/root/delta?token=next1", result.deltaLink)
+    }
+
+    @Test
+    fun `parseDriveItem drops root drive item directly and handles deleted tombstones`() {
+        val rootObj = JSONObject("""{"id":"r1","name":"root","folder":{},"root":{}}""")
+        assertNull(OneDriveGraphClientImpl.parseDriveItem(rootObj))
+
+        val deltaWithDeleted = """
+        {
+            "value": [
+                { "id": "folder_deleted", "deleted": { "state": "deleted" } },
+                { "deleted": { "state": "deleted" } }
+            ]
+        }
+        """.trimIndent()
+        val result = OneDriveGraphClientImpl.parseDeltaResult(deltaWithDeleted)
+        assertEquals(listOf("folder_deleted"), result.deletedIds)
+        assertTrue(result.items.isEmpty())
+    }
 }

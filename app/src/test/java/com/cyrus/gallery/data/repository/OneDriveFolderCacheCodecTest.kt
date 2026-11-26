@@ -2,6 +2,7 @@ package com.cyrus.gallery.data.repository
 
 import com.cyrus.gallery.domain.model.Album
 import com.cyrus.gallery.domain.model.MediaSource
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -73,7 +74,7 @@ class OneDriveFolderCacheCodecTest {
     }
 
     @Test
-    fun `writeToFileAtomically and readFromFile survive corruption checks and restore cleanly`() {
+    fun `writeToFileAtomically and readFromFile survive corruption checks and restore cleanly`() = runBlocking {
         val file = File(tempFolder.root, "onedrive_folders_cache.json")
         val folders = listOf(
             Album(id = "f1", name = "Camera Roll", source = MediaSource.ONEDRIVE, parentFolderId = "root_0"),
