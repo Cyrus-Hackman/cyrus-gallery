@@ -95,6 +95,9 @@ fun OneDriveScreen(
     val searchQuery = viewModel.searchQuery.collectAsStateWithLifecycle().value
     val browseMode = viewModel.browseMode.collectAsStateWithLifecycle().value
     val folderStack = viewModel.folderStack.collectAsStateWithLifecycle().value
+    val latestBrowseMode by rememberUpdatedState(browseMode)
+    val latestFolderStack by rememberUpdatedState(folderStack)
+    val latestIsSearchActive by rememberUpdatedState(isSearchActive)
     val context = LocalContext.current
     val activity = context as? Activity
     val gridState = rememberLazyGridState()
@@ -116,9 +119,9 @@ fun OneDriveScreen(
 
     LaunchedEffect(tabReselected, gridState, foldersGridState) {
         tabReselected.filter { it == GalleryDestination.ONEDRIVE.route }.collect {
-            if (folderStack.isNotEmpty()) {
+            if (!latestIsSearchActive && latestFolderStack.isNotEmpty()) {
                 viewModel.clearFolderNavigation()
-            } else if (browseMode == OneDriveBrowseMode.FOLDERS) {
+            } else if (!latestIsSearchActive && latestBrowseMode == OneDriveBrowseMode.FOLDERS) {
                 foldersGridState.animateScrollToItem(0)
             } else {
                 gridState.animateScrollToItem(0)
