@@ -112,8 +112,8 @@ fun PhotosScreen(
             }
         }
 
-        // Permission gate wraps the grid
-        MediaPermissionGate { hasPartialAccess ->
+        // Permission gate wraps the grid, while allowing already-synced cloud photos to stay visible if denied
+        MediaPermissionGate(allowCloudWhenDenied = state.hasMedia) { hasPartialAccess ->
             if (state.isLoading) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
