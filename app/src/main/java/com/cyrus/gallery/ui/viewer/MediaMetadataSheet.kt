@@ -59,11 +59,12 @@ fun MediaMetadataSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val exif by produceState<ExifDetails?>(initialValue = null, item.localContentUri) {
+    val exifState by produceState<ExifDetails?>(initialValue = null, item.localContentUri) {
         value = withContext(Dispatchers.IO) {
             readExif(context, item.localContentUri)
         }
     }
+    val exif = exifState
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
