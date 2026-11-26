@@ -33,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -46,6 +47,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.cyrus.gallery.domain.model.Album
 import com.cyrus.gallery.domain.model.MediaItem
+import com.cyrus.gallery.domain.model.MediaSource
+import com.cyrus.gallery.domain.model.collectDescendantFolderIds
 import com.cyrus.gallery.domain.model.groupByMonth
 import com.cyrus.gallery.ui.components.EmptyLibraryState
 import com.cyrus.gallery.ui.gallery.GalleryViewModel
@@ -68,6 +71,7 @@ fun AlbumsScreen(
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
     val galleryState = galleryViewModel.uiState.collectAsStateWithLifecycle().value
+    val cloudMedia = viewModel.cloudMedia.collectAsStateWithLifecycle().value
     var selectedAlbum by rememberSaveable { mutableStateOf<String?>(null) }
     val currentAlbumObj = selectedAlbum?.let { id -> state.albums.find { it.id == id } }
     val albumsListGridState = rememberLazyGridState()
@@ -112,10 +116,19 @@ fun AlbumsScreen(
                 }
             }
 
-            // Filter all media for this album
-            val albumMedia = galleryState.rawMedia.filter {
-                it.albumId == currentAlbum.id || it.albumName == currentAlbum.name
+            // Filter media cleanly per album source so OneDrive folders aren't stripped by local name deduplication
+            val albumMedia = remember(currentAlbum, galleryState.rawMedia, cloudMedia, state.albums) {
+                if (currentAlbum.source == MediaSource.ONEDRIVE) {
+                    val descendantIds = collectDescendantFolderIds(currentAlbum.id, state.albums)
+                    cloudMedia.filter { it.albumId in descendantIds }
+                } else {
+                    galleryState.rawMedia.filter {
+                        it.source == MediaSource.LOCAL &&
+                            (it.albumId == currentAlbum.id || it.albumName == currentAlbum.name)
+                    }
+                }
             }
+            val groupedAlbumMedia = remember(albumMedia) { albumMedia.groupByMonth() }
 
             if (albumMedia.isEmpty()) {
                 EmptyLibraryState(
@@ -125,7 +138,7 @@ fun AlbumsScreen(
                 )
             } else {
                 MediaGrid(
-                    groups = albumMedia.groupByMonth(),
+                    groups = groupedAlbumMedia,
                     state = albumGridState,
                     modifier = Modifier.fillMaxSize(),
                     onMediaClick = { clicked, all ->
@@ -161,7 +174,7 @@ fun AlbumsScreen(
                 )
             }
 
-            MediaPermissionGate { hasPartialAccess ->
+            MediaPermissionGate(allowCloudWhenDenied = state.albums.isNotEmpty()) { hasPartialAccess ->
                 if (state.isLoading) return@MediaPermissionGate
                 if (state.albums.isEmpty()) {
                     EmptyLibraryState(
@@ -192,7 +205,7 @@ fun AlbumsScreen(
 }
 
 @Composable
-private fun AlbumCard(album: Album, onClick: () -> Unit) {
+internal fun AlbumCard(album: Album, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()

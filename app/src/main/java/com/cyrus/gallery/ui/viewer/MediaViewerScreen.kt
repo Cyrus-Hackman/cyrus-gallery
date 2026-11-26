@@ -210,6 +210,26 @@ private fun MediaViewerContent(
 
     val statusMessage by viewModel.statusMessage.collectAsStateWithLifecycle()
     val favoriteIds by viewModel.favoriteIds.collectAsStateWithLifecycle()
+    val pendingLocalDelete by viewModel.pendingLocalDelete.collectAsStateWithLifecycle()
+
+    val deletePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        val pending = pendingLocalDelete ?: return@rememberLauncherForActivityResult
+        viewModel.clearPendingLocalDelete()
+        if (result.resultCode == Activity.RESULT_OK) {
+            if (pending.requiresManualRetryAfterGrant) {
+                viewModel.deleteMedia(pending.item, DeleteTarget.LOCAL_DEVICE, pending.onDeleted)
+            } else {
+                pending.onDeleted()
+            }
+        }
+    }
+
+    LaunchedEffect(pendingLocalDelete) {
+        val pending = pendingLocalDelete ?: return@LaunchedEffect
+        deletePermissionLauncher.launch(IntentSenderRequest.Builder(pending.intentSender).build())
+    }
 
     LaunchedEffect(statusMessage) {
         statusMessage?.let {
@@ -243,6 +263,7 @@ private fun MediaViewerContent(
                 VideoPage(
                     item = pageItem,
                     isCurrentPage = isCurrentPage,
+                    httpDataSourceFactory = viewModel.mediaDataSourceFactory,
                     onToggleControls = { controlsVisible = !controlsVisible },
                 )
             } else {
@@ -405,6 +426,13 @@ private fun ZoomableImagePage(
     }
 
     val lowResPainter = item.thumbnailUrl?.let { rememberAsyncImagePainter(it) }
+    var useGraphContentFallback by remember(item.id) { mutableStateOf(false) }
+    val imageModel = item.localContentUri
+        ?: if (useGraphContentFallback && item.oneDriveItemId != null) {
+            "https://graph.microsoft.com/v1.0/me/drive/items/${item.oneDriveItemId}/content"
+        } else {
+            item.highResUrl ?: item.thumbnailUrl
+        }
 
     Box(
         modifier = Modifier
@@ -447,9 +475,14 @@ private fun ZoomableImagePage(
         contentAlignment = Alignment.Center,
     ) {
         AsyncImage(
-            model = item.localContentUri ?: item.highResUrl ?: item.thumbnailUrl,
+            model = imageModel,
             placeholder = lowResPainter,
             error = lowResPainter,
+            onError = {
+                if (!useGraphContentFallback && item.source == MediaSource.ONEDRIVE && item.oneDriveItemId != null) {
+                    useGraphContentFallback = true
+                }
+            },
             contentDescription = item.displayName,
             contentScale = ContentScale.Fit,
             modifier = Modifier
@@ -464,24 +497,34 @@ private fun ZoomableImagePage(
     }
 }
 
+@AndroidxOptIn(UnstableApi::class)
 @Composable
 private fun VideoPage(
     item: MediaItem,
     isCurrentPage: Boolean,
+    httpDataSourceFactory: DataSource.Factory,
     onToggleControls: () -> Unit,
 ) {
     val context = LocalContext.current
     var isStreamingRequested by remember(item.id) { mutableStateOf(false) }
     val effectiveMediaUri = item.localContentUri
-        ?: (if (isStreamingRequested) item.highResUrl?.let { android.net.Uri.parse(it) } else null)
+        ?: (if (isStreamingRequested) {
+            // Prefer authenticated /content endpoint so expired pre-signed URLs never stall playback
+            item.oneDriveItemId?.let { android.net.Uri.parse("https://graph.microsoft.com/v1.0/me/drive/items/$it/content") }
+                ?: item.highResUrl?.let { android.net.Uri.parse(it) }
+        } else null)
 
     if (effectiveMediaUri != null) {
         val exoPlayer = remember(effectiveMediaUri) {
-            ExoPlayer.Builder(context).build().apply {
-                setMediaItem(ExoMediaItem.fromUri(effectiveMediaUri))
-                prepare()
-                playWhenReady = isCurrentPage
-            }
+            val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
+            ExoPlayer.Builder(context)
+                .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+                .build()
+                .apply {
+                    setMediaItem(ExoMediaItem.fromUri(effectiveMediaUri))
+                    prepare()
+                    playWhenReady = isCurrentPage
+                }
         }
 
         LaunchedEffect(isCurrentPage) {
@@ -514,7 +557,7 @@ private fun VideoPage(
             )
         }
     } else {
-        // High-quality cloud video preview with stream-on-demand support
+        // Use thumbnailUrl JPEG poster for unplayed cloud videos so we never pull raw video bytes just for preview
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -524,7 +567,7 @@ private fun VideoPage(
             contentAlignment = Alignment.Center,
         ) {
             AsyncImage(
-                model = item.highResUrl ?: item.thumbnailUrl,
+                model = item.thumbnailUrl,
                 contentDescription = item.displayName,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize(),

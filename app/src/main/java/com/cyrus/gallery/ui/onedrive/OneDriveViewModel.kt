@@ -6,7 +6,10 @@ import androidx.lifecycle.viewModelScope
 import com.cyrus.gallery.data.auth.AuthState
 import com.cyrus.gallery.data.auth.OneDriveAuthManager
 import com.cyrus.gallery.data.repository.OneDriveRepository
+import com.cyrus.gallery.data.sync.OneDriveSyncManager
+import com.cyrus.gallery.domain.model.Album
 import com.cyrus.gallery.domain.model.MediaItem
+import com.cyrus.gallery.domain.model.MediaSource
 import com.cyrus.gallery.domain.repository.GalleryRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,9 +17,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+enum class OneDriveBrowseMode { ALL_MEDIA, FOLDERS }
 
 data class OneDriveUiState(
     val authState: AuthState = AuthState.SignedOut(),
@@ -29,6 +35,7 @@ data class OneDriveUiState(
 class OneDriveViewModel @Inject constructor(
     private val authManager: OneDriveAuthManager,
     private val oneDriveRepository: OneDriveRepository,
+    private val syncManager: OneDriveSyncManager,
     galleryRepository: GalleryRepository,
 ) : ViewModel() {
 
@@ -36,6 +43,10 @@ class OneDriveViewModel @Inject constructor(
 
     val cloudMedia: StateFlow<List<MediaItem>> = galleryRepository.observeCloudMedia()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val cloudFolders: StateFlow<List<Album>> = galleryRepository.observeAlbums()
+        .map { albums -> albums.filter { it.source == MediaSource.ONEDRIVE } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val isHydrating: StateFlow<Boolean> = oneDriveRepository.isHydrating
 
@@ -50,6 +61,12 @@ class OneDriveViewModel @Inject constructor(
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _browseMode = MutableStateFlow(OneDriveBrowseMode.ALL_MEDIA)
+    val browseMode: StateFlow<OneDriveBrowseMode> = _browseMode.asStateFlow()
+
+    private val _folderStack = MutableStateFlow<List<String>>(emptyList())
+    val folderStack: StateFlow<List<String>> = _folderStack.asStateFlow()
 
     val displayedMedia: StateFlow<List<MediaItem>> = combine(
         cloudMedia,
@@ -69,10 +86,36 @@ class OneDriveViewModel @Inject constructor(
             viewModelScope.launch {
                 val result = runCatching { authManager.restoreSession() }.getOrElse { Result.failure(it) }
                 if (result.isSuccess) {
+                    syncManager.schedulePeriodicSync()
                     sync()
                 }
             }
         }
+    }
+
+    fun setBrowseMode(mode: OneDriveBrowseMode) {
+        _browseMode.value = mode
+        if (mode == OneDriveBrowseMode.ALL_MEDIA) {
+            _folderStack.value = emptyList()
+        }
+    }
+
+    fun openFolder(folderId: String) {
+        _browseMode.value = OneDriveBrowseMode.FOLDERS
+        if (_folderStack.value.lastOrNull() != folderId) {
+            _folderStack.value = _folderStack.value + folderId
+        }
+    }
+
+    fun navigateUpFolder() {
+        val current = _folderStack.value
+        if (current.isNotEmpty()) {
+            _folderStack.value = current.dropLast(1)
+        }
+    }
+
+    fun clearFolderNavigation() {
+        _folderStack.value = emptyList()
     }
 
     fun retryConnection() {
@@ -80,6 +123,7 @@ class OneDriveViewModel @Inject constructor(
             val result = runCatching { authManager.restoreSession() }.getOrElse { Result.failure(it) }
             if (result.isSuccess) {
                 _statusMessage.value = "Connected to OneDrive"
+                syncManager.schedulePeriodicSync()
                 sync()
             } else {
                 _statusMessage.value = result.exceptionOrNull()?.message ?: "Could not connect to OneDrive"
@@ -101,6 +145,7 @@ class OneDriveViewModel @Inject constructor(
             val result = authManager.signIn(activity)
             if (result.isSuccess) {
                 _statusMessage.value = "Signed in successfully"
+                syncManager.schedulePeriodicSync()
                 sync()
             } else {
                 _statusMessage.value = result.exceptionOrNull()?.message ?: "Sign-in failed"
@@ -112,6 +157,8 @@ class OneDriveViewModel @Inject constructor(
         viewModelScope.launch {
             authManager.signOut()
             oneDriveRepository.clearSyncState()
+            _folderStack.value = emptyList()
+            _browseMode.value = OneDriveBrowseMode.ALL_MEDIA
             _statusMessage.value = "Signed out"
         }
     }
@@ -119,10 +166,8 @@ class OneDriveViewModel @Inject constructor(
     fun sync(forceFullSync: Boolean = false) {
         viewModelScope.launch {
             _isSyncing.value = true
-            _statusMessage.value = "Syncing media from OneDrive..."
-            // If the library currently has 4 or fewer items, automatically trigger a full re-sync
-            val shouldForceFull = forceFullSync || cloudMedia.value.size <= 4
-            val result = oneDriveRepository.performDeltaSync(forceFullSync = shouldForceFull)
+            _statusMessage.value = if (forceFullSync) "Performing full OneDrive resync..." else "Syncing media from OneDrive..."
+            val result = oneDriveRepository.performDeltaSync(forceFullSync = forceFullSync)
             _isSyncing.value = false
             if (result.isSuccess) {
                 _statusMessage.value = "Synchronized ${result.getOrNull()} items"
