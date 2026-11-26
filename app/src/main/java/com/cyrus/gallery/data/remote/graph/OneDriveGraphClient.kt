@@ -192,9 +192,13 @@ class OneDriveGraphClientImpl @Inject constructor(
 
             val downloadUrl = obj.optString("@microsoft.graph.downloadUrl").takeIf { it.isNotEmpty() }
 
-            // High-quality thumbnail: prefer expanded 'large' preview, then downloadUrl (for images), then Graph large thumbnail endpoint
+            // High-quality thumbnail: prefer expanded 'large' preview (available from /children calls),
+            // then the stable authenticated Graph thumbnail endpoint. Never fall back to the expiring
+            // pre-signed @microsoft.graph.downloadUrl here — /delta doesn't expand thumbnails, so for
+            // delta items the downloadUrl would be used as the thumbnail, loading full-resolution files
+            // in the grid and breaking thumbnails once the pre-signed URL expires (~1 hour).
+            // The downloadUrl is still stored in GraphDriveItem.downloadUrl for use as highResUrl.
             val effectiveThumbnailUrl = thumbnailUrl
-                ?: (if (isImage) downloadUrl else null)
                 ?: "$GRAPH_BASE_URL/me/drive/items/$id/thumbnails/0/large/content"
 
             return GraphDriveItem(

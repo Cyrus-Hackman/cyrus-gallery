@@ -110,7 +110,10 @@ class OneDriveSyncManager @Inject constructor(
 
         workManager.enqueueUniqueWork(
             "download_$itemId",
-            ExistingWorkPolicy.KEEP,
+            // Use REPLACE for pinned downloads so an in-flight non-pinned download is cancelled and
+            // replaced with the correct pinned request (which writes to the pinned storage partition).
+            // KEEP is safe for cache-only downloads where re-enqueueing the same work is idempotent.
+            if (isPinned) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
             request,
         )
     }
