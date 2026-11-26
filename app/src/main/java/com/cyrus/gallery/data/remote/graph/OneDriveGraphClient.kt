@@ -71,9 +71,148 @@ class OneDriveGraphClientImpl @Inject constructor(
         private const val SIMPLE_UPLOAD_MAX_BYTES = 4L * 1024 * 1024
         private const val UPLOAD_CHUNK_BYTES = 320 * 1024 * 10 // 3.2 MB (multiple of 320 KiB per Graph upload session spec)
         private const val DELTA_SELECT_FIELDS =
-            "id,name,size,eTag,cTag,createdDateTime,lastModifiedDateTime,file,folder,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,parentReference"
+            "id,name,size,eTag,cTag,createdDateTime,lastModifiedDateTime,file,folder,root,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,parentReference"
         private const val CHILDREN_SELECT_FIELDS =
-            "id,name,size,eTag,cTag,createdDateTime,lastModifiedDateTime,file,folder,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,thumbnails,parentReference"
+            "id,name,size,eTag,cTag,createdDateTime,lastModifiedDateTime,file,folder,root,image,video,photo,fileSystemInfo,@microsoft.graph.downloadUrl,thumbnails,parentReference"
+
+        internal fun parsePagedResult(jsonString: String): GraphPagedResult {
+            val json = JSONObject(jsonString)
+            val valueArray = json.optJSONArray("value") ?: return GraphPagedResult(emptyList())
+            val items = mutableListOf<GraphDriveItem>()
+
+            for (i in 0 until valueArray.length()) {
+                val obj = valueArray.getJSONObject(i)
+                parseDriveItem(obj)?.let { items.add(it) }
+            }
+
+            val nextLink = json.optString("@odata.nextLink").takeIf { it.isNotEmpty() }
+            return GraphPagedResult(items = items, nextLink = nextLink)
+        }
+
+        internal fun parseDeltaResult(jsonString: String): GraphDeltaResult {
+            val json = JSONObject(jsonString)
+            val valueArray = json.optJSONArray("value") ?: return GraphDeltaResult(emptyList(), emptyList())
+            val items = mutableListOf<GraphDriveItem>()
+            val deletedIds = mutableListOf<String>()
+
+            for (i in 0 until valueArray.length()) {
+                val obj = valueArray.getJSONObject(i)
+                val isDeleted = obj.has("deleted") || obj.has("@removed")
+                if (isDeleted) {
+                    obj.optString("id").takeIf { it.isNotEmpty() }?.let { deletedIds.add(it) }
+                } else {
+                    parseDriveItem(obj)?.let { items.add(it) }
+                }
+            }
+
+            val nextLink = json.optString("@odata.nextLink").takeIf { it.isNotEmpty() }
+            val deltaLink = json.optString("@odata.deltaLink").takeIf { it.isNotEmpty() }
+            return GraphDeltaResult(items = items, deletedIds = deletedIds, nextLink = nextLink, deltaLink = deltaLink)
+        }
+
+        internal fun parseDriveItem(obj: JSONObject): GraphDriveItem? {
+            val id = obj.optString("id").takeIf { it.isNotEmpty() } ?: return null
+            val name = obj.optString("name", "")
+            val parentRef = obj.optJSONObject("parentReference")
+            val parentFolderId = parentRef?.optString("id")?.takeIf { it.isNotEmpty() }
+
+            // Microsoft Graph /delta returns the drive's root DriveItem itself; exclude it so
+            // top-level folders remain at root instead of being nested under a synthetic "root" album.
+            val isDriveRoot = obj.has("root") ||
+                (obj.has("folder") && parentFolderId == null && name.equals("root", ignoreCase = true))
+            if (isDriveRoot) return null
+
+            val size = obj.optLong("size", 0L)
+            val eTag = obj.optString("eTag").takeIf { it.isNotEmpty() }
+            val cTag = obj.optString("cTag").takeIf { it.isNotEmpty() }
+            val isFolder = obj.has("folder")
+
+            val fileObj = obj.optJSONObject("file")
+            val rawMimeType = fileObj?.optString("mimeType")
+
+            val ext = name.substringAfterLast('.', "").lowercase()
+            val isImageExtension = ext in setOf(
+                "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "bmp", "dng", "cr2", "nef", "arw", "tif", "tiff"
+            )
+            val isVideoExtension = ext in setOf(
+                "mp4", "mov", "m4v", "mkv", "webm", "3gp", "avi", "wmv", "flv", "ts", "mts"
+            )
+
+            // Comprehensive media classification: check facets, MIME types, and file extensions
+            val isImage = !isFolder && (
+                obj.has("image") ||
+                obj.has("photo") ||
+                rawMimeType?.startsWith("image/") == true ||
+                isImageExtension
+            )
+
+            val isVideo = !isFolder && !isImage && (
+                obj.has("video") ||
+                rawMimeType?.startsWith("video/") == true ||
+                isVideoExtension
+            )
+
+            val mimeType = rawMimeType ?: when {
+                isImage -> if (ext.isNotEmpty()) "image/$ext" else "image/jpeg"
+                isVideo -> if (ext.isNotEmpty()) "video/$ext" else "video/mp4"
+                isFolder -> "vnd.android.cursor.item/directory"
+                else -> "application/octet-stream"
+            }
+
+            // Extract best timestamp: photo.takenDateTime > fileSystemInfo.createdDateTime > createdDateTime > fileSystemInfo.lastModifiedDateTime > lastModifiedDateTime
+            val photoObj = obj.optJSONObject("photo")
+            val takenTimeStr = photoObj?.optString("takenDateTime")?.takeIf { it.isNotBlank() }
+            val fsObj = obj.optJSONObject("fileSystemInfo")
+            val fsCreatedStr = fsObj?.optString("createdDateTime")?.takeIf { it.isNotBlank() }
+            val topCreatedStr = obj.optString("createdDateTime").takeIf { it.isNotBlank() }
+            val fsModifiedStr = fsObj?.optString("lastModifiedDateTime")?.takeIf { it.isNotBlank() }
+            val topModifiedStr = obj.optString("lastModifiedDateTime").takeIf { it.isNotBlank() }
+
+            val bestTimestampStr = takenTimeStr
+                ?: fsCreatedStr
+                ?: topCreatedStr
+                ?: fsModifiedStr
+                ?: topModifiedStr
+
+            val createdAt = try {
+                bestTimestampStr?.let { Instant.parse(it) }
+            } catch (_: Exception) {
+                null
+            }
+
+            // Thumbnails - prefer 'large' for crisp, high-quality rendering
+            var thumbnailUrl: String? = null
+            val thumbsArray = obj.optJSONArray("thumbnails")
+            if (thumbsArray != null && thumbsArray.length() > 0) {
+                val thumbSet = thumbsArray.getJSONObject(0)
+                val large = thumbSet.optJSONObject("large")
+                val medium = thumbSet.optJSONObject("medium")
+                thumbnailUrl = (large ?: medium)?.optString("url")
+            }
+
+            val downloadUrl = obj.optString("@microsoft.graph.downloadUrl").takeIf { it.isNotEmpty() }
+
+            // High-quality thumbnail: prefer expanded 'large' preview, then downloadUrl (for images), then Graph large thumbnail endpoint
+            val effectiveThumbnailUrl = thumbnailUrl
+                ?: (if (isImage) downloadUrl else null)
+                ?: "$GRAPH_BASE_URL/me/drive/items/$id/thumbnails/0/large/content"
+
+            return GraphDriveItem(
+                id = id,
+                name = name,
+                sizeBytes = size,
+                eTag = eTag,
+                cTag = cTag,
+                isFolder = isFolder,
+                isImage = isImage,
+                isVideo = isVideo,
+                mimeType = mimeType,
+                createdAt = createdAt,
+                thumbnailUrl = effectiveThumbnailUrl,
+                downloadUrl = downloadUrl,
+                parentFolderId = parentFolderId,
+            )
+        }
     }
 
     private suspend fun executeGet(url: String): Result<String> = withContext(Dispatchers.IO) {
@@ -283,137 +422,5 @@ class OneDriveGraphClientImpl @Inject constructor(
         } catch (e: Exception) {
             Result.failure(e)
         }
-    }
-
-    private fun parsePagedResult(jsonString: String): GraphPagedResult {
-        val json = JSONObject(jsonString)
-        val valueArray = json.optJSONArray("value") ?: return GraphPagedResult(emptyList())
-        val items = mutableListOf<GraphDriveItem>()
-
-        for (i in 0 until valueArray.length()) {
-            val obj = valueArray.getJSONObject(i)
-            parseDriveItem(obj)?.let { items.add(it) }
-        }
-
-        val nextLink = json.optString("@odata.nextLink").takeIf { it.isNotEmpty() }
-        return GraphPagedResult(items = items, nextLink = nextLink)
-    }
-
-    private fun parseDeltaResult(jsonString: String): GraphDeltaResult {
-        val json = JSONObject(jsonString)
-        val valueArray = json.optJSONArray("value") ?: return GraphDeltaResult(emptyList(), emptyList())
-        val items = mutableListOf<GraphDriveItem>()
-        val deletedIds = mutableListOf<String>()
-
-        for (i in 0 until valueArray.length()) {
-            val obj = valueArray.getJSONObject(i)
-            val isDeleted = obj.has("deleted") || obj.has("@removed")
-            if (isDeleted) {
-                deletedIds.add(obj.optString("id"))
-            } else {
-                parseDriveItem(obj)?.let { items.add(it) }
-            }
-        }
-
-        val nextLink = json.optString("@odata.nextLink").takeIf { it.isNotEmpty() }
-        val deltaLink = json.optString("@odata.deltaLink").takeIf { it.isNotEmpty() }
-        return GraphDeltaResult(items = items, deletedIds = deletedIds, nextLink = nextLink, deltaLink = deltaLink)
-    }
-
-    private fun parseDriveItem(obj: JSONObject): GraphDriveItem? {
-        val id = obj.optString("id").takeIf { it.isNotEmpty() } ?: return null
-        val name = obj.optString("name", "")
-        val size = obj.optLong("size", 0L)
-        val eTag = obj.optString("eTag").takeIf { it.isNotEmpty() }
-        val cTag = obj.optString("cTag").takeIf { it.isNotEmpty() }
-        val isFolder = obj.has("folder")
-
-        val fileObj = obj.optJSONObject("file")
-        val rawMimeType = fileObj?.optString("mimeType")
-
-        val ext = name.substringAfterLast('.', "").lowercase()
-        val isImageExtension = ext in setOf(
-            "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "bmp", "dng", "cr2", "nef", "arw", "tif", "tiff"
-        )
-        val isVideoExtension = ext in setOf(
-            "mp4", "mov", "m4v", "mkv", "webm", "3gp", "avi", "wmv", "flv", "ts", "mts"
-        )
-
-        // Comprehensive media classification: check facets, MIME types, and file extensions
-        val isImage = !isFolder && (
-            obj.has("image") ||
-            obj.has("photo") ||
-            rawMimeType?.startsWith("image/") == true ||
-            isImageExtension
-        )
-
-        val isVideo = !isFolder && !isImage && (
-            obj.has("video") ||
-            rawMimeType?.startsWith("video/") == true ||
-            isVideoExtension
-        )
-
-        val mimeType = rawMimeType ?: when {
-            isImage -> if (ext.isNotEmpty()) "image/$ext" else "image/jpeg"
-            isVideo -> if (ext.isNotEmpty()) "video/$ext" else "video/mp4"
-            isFolder -> "vnd.android.cursor.item/directory"
-            else -> "application/octet-stream"
-        }
-
-        // Extract best timestamp: photo.takenDateTime > fileSystemInfo.createdDateTime > createdDateTime > fileSystemInfo.lastModifiedDateTime > lastModifiedDateTime
-        val photoObj = obj.optJSONObject("photo")
-        val takenTimeStr = photoObj?.optString("takenDateTime")?.takeIf { it.isNotBlank() }
-        val fsObj = obj.optJSONObject("fileSystemInfo")
-        val fsCreatedStr = fsObj?.optString("createdDateTime")?.takeIf { it.isNotBlank() }
-        val topCreatedStr = obj.optString("createdDateTime").takeIf { it.isNotBlank() }
-        val fsModifiedStr = fsObj?.optString("lastModifiedDateTime")?.takeIf { it.isNotBlank() }
-        val topModifiedStr = obj.optString("lastModifiedDateTime").takeIf { it.isNotBlank() }
-
-        val bestTimestampStr = takenTimeStr
-            ?: fsCreatedStr
-            ?: topCreatedStr
-            ?: fsModifiedStr
-            ?: topModifiedStr
-
-        val createdAt = try {
-            bestTimestampStr?.let { Instant.parse(it) }
-        } catch (_: Exception) {
-            null
-        }
-
-        // Thumbnails - prefer 'large' for crisp, high-quality rendering
-        var thumbnailUrl: String? = null
-        val thumbsArray = obj.optJSONArray("thumbnails")
-        if (thumbsArray != null && thumbsArray.length() > 0) {
-            val thumbSet = thumbsArray.getJSONObject(0)
-            val large = thumbSet.optJSONObject("large")
-            val medium = thumbSet.optJSONObject("medium")
-            thumbnailUrl = (large ?: medium)?.optString("url")
-        }
-
-        val downloadUrl = obj.optString("@microsoft.graph.downloadUrl").takeIf { it.isNotEmpty() }
-        val parentRef = obj.optJSONObject("parentReference")
-        val parentFolderId = parentRef?.optString("id")
-
-        // High-quality thumbnail: prefer expanded 'large' preview, then downloadUrl (for images), then Graph large thumbnail endpoint
-        val effectiveThumbnailUrl = thumbnailUrl
-            ?: (if (isImage) downloadUrl else null)
-            ?: "$GRAPH_BASE_URL/me/drive/items/$id/thumbnails/0/large/content"
-
-        return GraphDriveItem(
-            id = id,
-            name = name,
-            sizeBytes = size,
-            eTag = eTag,
-            cTag = cTag,
-            isFolder = isFolder,
-            isImage = isImage,
-            isVideo = isVideo,
-            mimeType = mimeType,
-            createdAt = createdAt,
-            thumbnailUrl = effectiveThumbnailUrl,
-            downloadUrl = downloadUrl,
-            parentFolderId = parentFolderId,
-        )
     }
 }
