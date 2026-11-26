@@ -20,4 +20,16 @@ class AlbumTest {
         assertEquals(42, album.itemCount)
         assertEquals(MediaSource.LOCAL, album.source)
     }
+
+    @Test
+    fun `collectDescendantFolderIds gathers nested cloud subfolders and guards cycles`() {
+        val root = Album(id = "f_root", name = "Pictures", source = MediaSource.ONEDRIVE)
+        val child = Album(id = "f_2025", name = "2025", source = MediaSource.ONEDRIVE, parentFolderId = "f_root")
+        val grandChild = Album(id = "f_trip", name = "Trip", source = MediaSource.ONEDRIVE, parentFolderId = "f_2025")
+        val other = Album(id = "f_other", name = "Docs", source = MediaSource.ONEDRIVE)
+
+        val ids = collectDescendantFolderIds("f_root", listOf(root, child, grandChild, other))
+
+        assertEquals(setOf("f_root", "f_2025", "f_trip"), ids)
+    }
 }
