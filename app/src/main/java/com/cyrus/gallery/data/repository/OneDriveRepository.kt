@@ -148,8 +148,10 @@ class OneDriveRepository @Inject constructor(
             prefs.edit().remove(PREF_DELTA_LINK).apply()
         }
         var nextLinkOrToken = currentDeltaLink
+        val isFullSyncPass = nextLinkOrToken == null
         var totalSynced = 0
         val existingCacheById = cacheDao.getAll().associateBy { it.cacheId }.toMutableMap()
+        val fullSyncFolders = mutableListOf<Album>()
 
         while (true) {
             if (syncEpoch != startEpoch) return@withLock Result.success(0)
@@ -179,7 +181,7 @@ class OneDriveRepository @Inject constructor(
             val syncTimeMillis = System.currentTimeMillis()
 
             for (item in result.items) {
-                if (item.isFolder) {
+                if (item.isFolder && !(item.parentFolderId.isNullOrEmpty() && item.name.equals("root", ignoreCase = true))) {
                     newFolders.add(
                         Album(
                             id = item.id,
@@ -239,17 +241,42 @@ class OneDriveRepository @Inject constructor(
             totalSynced += newMedia.size
 
             // Progressively update in-memory lists after each page so UI updates live
-            _cloudItems.value = (newMedia + _cloudItems.value.filter { it.oneDriveItemId !in result.deletedIds })
+            val deletedIdSet = result.deletedIds.toSet()
+            _cloudItems.value = (newMedia + _cloudItems.value.filter { it.oneDriveItemId !in deletedIdSet })
                 .distinctBy { it.id }
                 .sortedByDescending { it.createdAt ?: java.time.Instant.EPOCH }
 
-            _cloudFolders.value = (newFolders + _cloudFolders.value.filter { it.id !in result.deletedIds })
-                .distinctBy { it.id }
+            val mergedFolders = OneDriveFolderCacheCodec.mergeSyncedFolders(
+                existing = _cloudFolders.value,
+                incoming = newFolders,
+                deletedIds = deletedIdSet,
+            )
+            val foldersChanged = mergedFolders != _cloudFolders.value
+            _cloudFolders.value = mergedFolders
+            if (isFullSyncPass) {
+                fullSyncFolders.addAll(newFolders)
+            }
 
             if (!result.nextLink.isNullOrEmpty()) {
+                if (foldersChanged) {
+                    OneDriveFolderCacheCodec.writeToFileAtomically(foldersCacheFile, mergedFolders)
+                }
                 // Continue fetching subsequent pages
                 nextLinkOrToken = result.nextLink
             } else {
+                val finalFolders = if (isFullSyncPass) {
+                    OneDriveFolderCacheCodec.mergeSyncedFolders(
+                        existing = emptyList(),
+                        incoming = fullSyncFolders,
+                        deletedIds = deletedIdSet,
+                    )
+                } else {
+                    mergedFolders
+                }
+                _cloudFolders.value = finalFolders
+                if (foldersChanged || isFullSyncPass) {
+                    OneDriveFolderCacheCodec.writeToFileAtomically(foldersCacheFile, finalFolders)
+                }
                 // Completed all pages; persist deltaLink for incremental updates
                 currentDeltaLink = result.deltaLink
                 if (!result.deltaLink.isNullOrEmpty()) {
@@ -272,6 +299,8 @@ class OneDriveRepository @Inject constructor(
         appScope.launch(Dispatchers.IO) {
             cacheDao.clearAll()
             storageManager.clearAllTemporaryCache()
+            foldersCacheFile.delete()
+            File(foldersCacheFile.parentFile, "${foldersCacheFile.name}.tmp").delete()
         }
     }
 
