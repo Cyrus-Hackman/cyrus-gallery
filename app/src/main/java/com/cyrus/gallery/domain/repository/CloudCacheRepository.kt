@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.Flow
 interface CloudCacheRepository {
     fun observeStorageSummary(): Flow<CloudCacheStorageSummary>
     suspend fun setPinned(driveId: String, itemId: String, pinned: Boolean)
+    suspend fun clearLocalCopy(itemId: String)
     suspend fun clearTemporaryCache(): CacheClearResult
     suspend fun evict(policy: CloudCachePolicy): CacheClearResult
 }

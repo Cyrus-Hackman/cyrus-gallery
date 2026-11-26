@@ -49,23 +49,38 @@ class CloudCacheRepositoryImpl @Inject constructor(
     }
 
     override suspend fun setPinned(driveId: String, itemId: String, pinned: Boolean): Unit = withContext(Dispatchers.IO) {
-        val entity = cacheDao.find(driveId, itemId) ?: return@withContext
+        // Look up by itemId first because driveId stores parentFolderId for items inside OneDrive folders
+        val entity = cacheDao.findByItemId(itemId) ?: cacheDao.find(driveId, itemId) ?: return@withContext
         val currentPath = entity.localCachedPath
+        val hasLocalFile = !currentPath.isNullOrEmpty() && File(currentPath).exists()
 
-        val newTargetState = if (pinned) CloudStorageState.PINNED_OFFLINE else CloudStorageState.CACHED
         val isVideo = entity.mimeType.startsWith("video")
         val mediaType = if (isVideo) MediaType.VIDEO else MediaType.IMAGE
 
-        val newPath = if (!currentPath.isNullOrEmpty() && File(currentPath).exists()) {
-            storageManager.migratePinnedFile(currentPath, mediaType, pinned) ?: currentPath
+        val newPath = if (hasLocalFile) {
+            storageManager.migratePinnedFile(currentPath!!, mediaType, pinned) ?: currentPath
         } else {
-            currentPath
+            null
+        }
+        val newTargetState = when {
+            pinned -> CloudStorageState.PINNED_OFFLINE
+            hasLocalFile -> CloudStorageState.CACHED
+            else -> CloudStorageState.REMOTE_ONLY
         }
 
         cacheDao.updateStorageState(
             cacheId = entity.cacheId,
             state = newTargetState,
             path = newPath,
+            accessedTime = System.currentTimeMillis(),
+        )
+    }
+
+    override suspend fun clearLocalCopy(itemId: String): Unit = withContext(Dispatchers.IO) {
+        val entity = cacheDao.findByItemId(itemId) ?: return@withContext
+        entity.localCachedPath?.let { storageManager.deleteManagedLocalCopySafely(it) }
+        cacheDao.clearLocalCopyState(
+            cacheId = entity.cacheId,
             accessedTime = System.currentTimeMillis(),
         )
     }

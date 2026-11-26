@@ -8,7 +8,7 @@ import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
-import com.cyrus.gallery.data.auth.OneDriveAuthManager
+import com.cyrus.gallery.di.GraphMediaClient
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.OkHttpClient
 import javax.inject.Inject
@@ -20,7 +20,8 @@ class CyrusGalleryApplication : Application(), Configuration.Provider, ImageLoad
     lateinit var workerFactory: HiltWorkerFactory
 
     @Inject
-    lateinit var authManager: OneDriveAuthManager
+    @GraphMediaClient
+    lateinit var mediaHttpClient: OkHttpClient
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -28,31 +29,8 @@ class CyrusGalleryApplication : Application(), Configuration.Provider, ImageLoad
             .build()
 
     override fun newImageLoader(): ImageLoader {
-        val okHttpClient = OkHttpClient.Builder()
-            .addInterceptor { chain ->
-                val request = chain.request()
-                val host = request.url.host
-                if (host.contains("graph.microsoft.com")) {
-                    val token = try {
-                        if (::authManager.isInitialized) {
-                            authManager.cachedAccessToken
-                        } else null
-                    } catch (_: Exception) {
-                        null
-                    }
-                    if (!token.isNullOrEmpty()) {
-                        val authRequest = request.newBuilder()
-                            .header("Authorization", "Bearer $token")
-                            .build()
-                        return@addInterceptor chain.proceed(authRequest)
-                    }
-                }
-                chain.proceed(request)
-            }
-            .build()
-
         return ImageLoader.Builder(this)
-            .okHttpClient(okHttpClient)
+            .okHttpClient(mediaHttpClient)
             .components {
                 add(VideoFrameDecoder.Factory())
             }

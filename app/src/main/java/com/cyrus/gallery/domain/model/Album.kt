@@ -10,4 +10,5 @@ data class Album(
     val coverThumbnailUrl: String? = null,
     val itemCount: Int = 0,
     val source: MediaSource = MediaSource.LOCAL,
+    val parentFolderId: String? = null,
 )

@@ -2,6 +2,7 @@ package com.cyrus.gallery.di
 
 import android.content.Context
 import androidx.room.Room
+import com.cyrus.gallery.data.auth.OneDriveAuthManager
 import com.cyrus.gallery.data.database.CloudMediaCacheDao
 import com.cyrus.gallery.data.database.GalleryDatabase
 import dagger.Module
@@ -9,9 +10,15 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import javax.inject.Qualifier
 import javax.inject.Singleton
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class GraphMediaClient
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -23,6 +30,39 @@ object NetworkModule {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    @Provides
+    @Singleton
+    @GraphMediaClient
+    fun provideGraphMediaHttpClient(
+        baseClient: OkHttpClient,
+        authManager: OneDriveAuthManager,
+    ): OkHttpClient = baseClient.newBuilder()
+        .addInterceptor { chain ->
+            val request = chain.request()
+            if (request.url.host.contains("graph.microsoft.com")) {
+                val token = authManager.cachedAccessToken
+                if (!token.isNullOrEmpty()) {
+                    return@addInterceptor chain.proceed(
+                        request.newBuilder()
+                            .header("Authorization", "Bearer $token")
+                            .build(),
+                    )
+                }
+            }
+            chain.proceed(request)
+        }
+        .authenticator { _, response ->
+            // Synchronously refresh expired token once on 401 without blocking fast normal image scrolls
+            if (!response.request.url.host.contains("graph.microsoft.com") || response.priorResponse != null) {
+                return@authenticator null
+            }
+            val freshToken = runBlocking { authManager.getAccessToken() } ?: return@authenticator null
+            response.request.newBuilder()
+                .header("Authorization", "Bearer $freshToken")
+                .build()
+        }
         .build()
 
     @Provides

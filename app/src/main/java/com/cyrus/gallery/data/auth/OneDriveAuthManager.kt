@@ -77,6 +77,46 @@ class OneDriveAuthManagerImpl @Inject constructor(
         }
     }
 
+    private suspend fun loadCurrentAccount(app: ISingleAccountPublicClientApplication): Result<IAccount?> =
+        suspendCancellableCoroutine { continuation ->
+            app.getCurrentAccountAsync(object : ISingleAccountPublicClientApplication.CurrentAccountCallback {
+                override fun onAccountLoaded(activeAccount: IAccount?) {
+                    continuation.resume(Result.success(activeAccount))
+                }
+
+                override fun onAccountChanged(priorAccount: IAccount?, currentAccount: IAccount?) {
+                    if (currentAccount == null) {
+                        this@OneDriveAuthManagerImpl.currentAccount = null
+                        cachedAccessToken = null
+                        _authState.value = AuthState.SignedOut()
+                    }
+                }
+
+                override fun onError(exception: MsalException) {
+                    continuation.resume(Result.failure(exception))
+                }
+            })
+        }
+
+    private suspend fun acquireTokenSilent(
+        app: ISingleAccountPublicClientApplication,
+        account: IAccount,
+    ): Result<IAuthenticationResult> = suspendCancellableCoroutine { continuation ->
+        app.acquireTokenSilentAsync(
+            scopes,
+            account.authority,
+            object : SilentAuthenticationCallback {
+                override fun onSuccess(result: IAuthenticationResult) {
+                    continuation.resume(Result.success(result))
+                }
+
+                override fun onError(exception: MsalException) {
+                    continuation.resume(Result.failure(exception))
+                }
+            },
+        )
+    }
+
     override suspend fun restoreSession(): Result<String> {
         val currentToken = cachedAccessToken
         if (_authState.value is AuthState.SignedIn && currentAccount != null && !currentToken.isNullOrEmpty()) {
@@ -99,68 +139,52 @@ class OneDriveAuthManagerImpl @Inject constructor(
         }
 
         val app = appResult.getOrThrow()
-        return suspendCancellableCoroutine { continuation ->
-            app.getCurrentAccountAsync(object : ISingleAccountPublicClientApplication.CurrentAccountCallback {
-                override fun onAccountLoaded(activeAccount: IAccount?) {
-                    if (activeAccount == null) {
-                        currentAccount = null
-                        cachedAccessToken = null
-                        _authState.value = AuthState.SignedOut()
-                        continuation.resume(Result.failure(IllegalStateException("No active account")))
-                        return
-                    }
-                    currentAccount = activeAccount
-                    app.acquireTokenSilentAsync(
-                        scopes,
-                        activeAccount.authority,
-                        object : SilentAuthenticationCallback {
-                            override fun onSuccess(result: IAuthenticationResult) {
-                                currentAccount = result.account
-                                cachedAccessToken = result.accessToken
-                                _authState.value = AuthState.SignedIn(
-                                    displayName = result.account.username,
-                                    accountId = result.account.id,
-                                )
-                                continuation.resume(Result.success(result.accessToken))
-                            }
+        val accountResult = loadCurrentAccount(app)
+        if (accountResult.isFailure) {
+            val exception = accountResult.exceptionOrNull()
+            cachedAccessToken = null
+            val acct = currentAccount
+            _authState.value = if (acct != null && exception !is MsalUiRequiredException) {
+                AuthState.Offline(acct.username, acct.id, exception?.message)
+            } else {
+                AuthState.SignedOut(exception?.message)
+            }
+            return Result.failure(exception ?: Exception("Failed to load Microsoft account"))
+        }
 
-                            override fun onError(exception: MsalException) {
-                                cachedAccessToken = null
-                                // Preserve account offline state for transient/network failures; require login only when UI interaction is mandatory
-                                _authState.value = if (exception is MsalUiRequiredException) {
-                                    AuthState.SignedOut(exception.message)
-                                } else {
-                                    AuthState.Offline(
-                                        displayName = activeAccount.username,
-                                        accountId = activeAccount.id,
-                                        message = exception.message,
-                                    )
-                                }
-                                continuation.resume(Result.failure(exception))
-                            }
-                        },
-                    )
-                }
+        val activeAccount = accountResult.getOrNull()
+        if (activeAccount == null) {
+            currentAccount = null
+            cachedAccessToken = null
+            _authState.value = AuthState.SignedOut()
+            return Result.failure(IllegalStateException("No active account"))
+        }
 
-                override fun onAccountChanged(priorAccount: IAccount?, currentAccount: IAccount?) {
-                    if (currentAccount == null) {
-                        this@OneDriveAuthManagerImpl.currentAccount = null
-                        cachedAccessToken = null
-                        _authState.value = AuthState.SignedOut()
-                    }
-                }
-
-                override fun onError(exception: MsalException) {
-                    cachedAccessToken = null
-                    val acct = currentAccount
-                    _authState.value = if (acct != null && exception !is MsalUiRequiredException) {
-                        AuthState.Offline(acct.username, acct.id, exception.message)
-                    } else {
-                        AuthState.SignedOut(exception.message)
-                    }
-                    continuation.resume(Result.failure(exception))
-                }
-            })
+        currentAccount = activeAccount
+        val tokenResult = acquireTokenSilent(app, activeAccount)
+        return if (tokenResult.isSuccess) {
+            val auth = tokenResult.getOrThrow()
+            currentAccount = auth.account
+            cachedAccessToken = auth.accessToken
+            _authState.value = AuthState.SignedIn(
+                displayName = auth.account.username,
+                accountId = auth.account.id,
+            )
+            Result.success(auth.accessToken)
+        } else {
+            val exception = tokenResult.exceptionOrNull()
+            cachedAccessToken = null
+            // Preserve account offline state for transient/network failures; require login only when UI interaction is mandatory
+            _authState.value = if (exception is MsalUiRequiredException) {
+                AuthState.SignedOut(exception.message)
+            } else {
+                AuthState.Offline(
+                    displayName = activeAccount.username,
+                    accountId = activeAccount.id,
+                    message = exception?.message,
+                )
+            }
+            Result.failure(exception ?: Exception("Silent token acquisition failed"))
         }
     }
 
@@ -227,24 +251,13 @@ class OneDriveAuthManagerImpl @Inject constructor(
 
     override suspend fun getAccessToken(): String? {
         val app = clientApp ?: ensureClient().getOrNull() ?: return null
-        val account = currentAccount ?: return null
+        val account = currentAccount ?: loadCurrentAccount(app).getOrNull()?.also {
+            currentAccount = it
+        } ?: return null
 
-        return suspendCancellableCoroutine { continuation ->
-            app.acquireTokenSilentAsync(
-                scopes,
-                account.authority,
-                object : SilentAuthenticationCallback {
-                    override fun onSuccess(result: IAuthenticationResult) {
-                        currentAccount = result.account
-                        cachedAccessToken = result.accessToken
-                        continuation.resume(result.accessToken)
-                    }
-
-                    override fun onError(exception: MsalException) {
-                        continuation.resume(null)
-                    }
-                },
-            )
-        }
+        val authResult = acquireTokenSilent(app, account).getOrNull() ?: return null
+        currentAccount = authResult.account
+        cachedAccessToken = authResult.accessToken
+        return authResult.accessToken
     }
 }

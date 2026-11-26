@@ -102,6 +102,17 @@ class PrivateStorageManager @Inject constructor(
         }
     }
 
+    /** Deletes an app-managed local copy (either temporary cache/ or offline/ pinned copy), never external storage. */
+    fun deleteManagedLocalCopySafely(path: String): Boolean {
+        val file = File(path)
+        val isInsideManagedStorage = file.canonicalPath.startsWith(baseDir.canonicalPath)
+        return if (isInsideManagedStorage && file.exists()) {
+            file.delete()
+        } else {
+            false
+        }
+    }
+
     /** Clears all temporary cached files (leaves offline/ untouched). */
     fun clearAllTemporaryCache(): Pair<Long, Int> {
         var reclaimedBytes = 0L

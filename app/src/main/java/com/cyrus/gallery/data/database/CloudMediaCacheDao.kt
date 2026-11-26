@@ -28,10 +28,13 @@ interface CloudMediaCacheDao {
     suspend fun getAll(): List<CloudMediaCacheEntity>
 
     @Query("SELECT * FROM cloud_media_cache ORDER BY COALESCE(createdAtMillis, lastSynchronizedAtMillis, 0) DESC LIMIT :limit")
-    suspend fun getRecent(limit: Int = 500): List<CloudMediaCacheEntity>
+    suspend fun getRecent(limit: Int = 5000): List<CloudMediaCacheEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(item: CloudMediaCacheEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(items: List<CloudMediaCacheEntity>)
 
     @Query("UPDATE cloud_media_cache SET storageState = :state, localCachedPath = :path, lastAccessedAtMillis = :accessedTime WHERE cacheId = :cacheId")
     suspend fun updateStorageState(cacheId: String, state: CloudStorageState, path: String?, accessedTime: Long)
@@ -39,9 +42,18 @@ interface CloudMediaCacheDao {
     @Query("UPDATE cloud_media_cache SET downloadStatus = :status, downloadProgress = :progress, localCachedPath = :path, downloadedAtMillis = :downloadedTime WHERE cacheId = :cacheId")
     suspend fun updateDownloadStatus(cacheId: String, status: CloudDownloadStatus, progress: Int, path: String?, downloadedTime: Long?)
 
+    @Query("UPDATE cloud_media_cache SET storageState = 'REMOTE_ONLY', downloadStatus = 'NOT_DOWNLOADED', downloadProgress = 0, localCachedPath = NULL, downloadedAtMillis = NULL, lastAccessedAtMillis = :accessedTime WHERE cacheId = :cacheId")
+    suspend fun clearLocalCopyState(cacheId: String, accessedTime: Long)
+
     @Query("UPDATE cloud_media_cache SET lastAccessedAtMillis = :accessedTime WHERE oneDriveItemId = :itemId")
     suspend fun updateLastAccessed(itemId: String, accessedTime: Long)
 
     @Query("DELETE FROM cloud_media_cache WHERE cacheId = :cacheId")
     suspend fun removeRecord(cacheId: String)
+
+    @Query("DELETE FROM cloud_media_cache WHERE cacheId IN (:cacheIds)")
+    suspend fun removeRecords(cacheIds: List<String>)
+
+    @Query("DELETE FROM cloud_media_cache")
+    suspend fun clearAll()
 }

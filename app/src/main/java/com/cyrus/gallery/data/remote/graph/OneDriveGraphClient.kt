@@ -1,14 +1,19 @@
 package com.cyrus.gallery.data.remote.graph
 
+import android.net.Uri
 import com.cyrus.gallery.data.auth.OneDriveAuthManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.IOException
+import java.io.InputStream
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -47,6 +52,12 @@ interface OneDriveGraphClient {
     suspend fun getDelta(deltaLinkOrToken: String? = null): Result<GraphDeltaResult>
     suspend fun deleteItem(itemId: String): Result<Unit>
     suspend fun uploadItem(fileName: String, bytes: ByteArray, mimeType: String): Result<GraphDriveItem>
+    suspend fun uploadStream(
+        fileName: String,
+        contentLength: Long,
+        mimeType: String,
+        openStream: () -> InputStream?,
+    ): Result<GraphDriveItem>
 }
 
 @Singleton

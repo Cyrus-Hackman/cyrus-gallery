@@ -2,6 +2,7 @@ package com.cyrus.gallery.data.repository
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import com.cyrus.gallery.data.database.CloudMediaCacheDao
 import com.cyrus.gallery.data.database.CloudMediaCacheEntity
 import com.cyrus.gallery.data.database.FavoriteMediaDao
