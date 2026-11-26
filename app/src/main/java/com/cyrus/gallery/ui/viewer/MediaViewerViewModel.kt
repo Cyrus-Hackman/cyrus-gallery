@@ -79,10 +79,16 @@ class MediaViewerViewModel @Inject constructor(
 
     fun observeViewerItems(config: ViewerSessionConfig): Flow<List<MediaItem>> {
         return when (config.sourceRoute) {
-            ViewerScopeRoutes.ONEDRIVE -> repository.observeCloudMedia().map { items ->
-                items.filter { item ->
-                    (config.albumId == null || item.albumId == config.albumId) &&
-                        (config.searchQuery.isBlank() || item.matchesQuery(config.searchQuery))
+            ViewerScopeRoutes.ONEDRIVE -> if (config.rootFolderOnly) {
+                combine(
+                    repository.observeCloudMedia(),
+                    repository.observeAlbums(),
+                ) { items, albums ->
+                    filterOneDriveViewerItems(items, albums, config)
+                }
+            } else {
+                repository.observeCloudMedia().map { items ->
+                    filterOneDriveViewerItems(items, emptyList(), config)
                 }
             }
             ViewerScopeRoutes.ALBUMS -> combine(
@@ -103,11 +109,18 @@ class MediaViewerViewModel @Inject constructor(
             }
             ViewerScopeRoutes.FAVOURITES -> {
                 var sessionItemIds = config.initialItems.map { it.id }.toSet().takeIf { it.isNotEmpty() }
-                repository.observeMedia().map { items ->
+                combine(
+                    repository.observeMedia(),
+                    repository.observeCloudMedia(),
+                ) { unifiedMedia, cloudMedia ->
                     val allowedIds = sessionItemIds ?: (
-                        items.filter { it.isFavourite }.map { it.id }.toSet() + config.selectedItemId
+                        (unifiedMedia + cloudMedia)
+                            .asSequence()
+                            .filter { it.isFavourite }
+                            .map { it.id }
+                            .toSet() + config.selectedItemId
                         ).also { sessionItemIds = it }
-                    items.filter { it.id in allowedIds || it.isFavourite }
+                    filterFavoriteSessionItems(unifiedMedia, cloudMedia, allowedIds)
                 }
             }
             else -> repository.observeMedia().map { items ->
@@ -219,5 +232,43 @@ class MediaViewerViewModel @Inject constructor(
 
     fun clearStatusMessage() {
         _statusMessage.value = null
+    }
+
+    companion object {
+        internal fun filterOneDriveViewerItems(
+            cloudItems: List<MediaItem>,
+            albums: List<Album>,
+            config: ViewerSessionConfig,
+        ): List<MediaItem> {
+            val folderIds = if (config.rootFolderOnly) {
+                albums.asSequence()
+                    .filter { it.source == MediaSource.ONEDRIVE }
+                    .map { it.id }
+                    .toSet()
+            } else {
+                emptySet()
+            }
+            return cloudItems.filter { item ->
+                val matchesFolder = when {
+                    config.rootFolderOnly -> item.albumId == null || item.albumId !in folderIds
+                    config.albumId != null -> item.albumId == config.albumId
+                    else -> true
+                }
+                matchesFolder && (config.searchQuery.isBlank() || item.matchesQuery(config.searchQuery))
+            }
+        }
+
+        internal fun filterFavoriteSessionItems(
+            unifiedMedia: List<MediaItem>,
+            cloudMedia: List<MediaItem>,
+            sessionAllowedIds: Set<String>,
+        ): List<MediaItem> {
+            val byId = LinkedHashMap<String, MediaItem>(unifiedMedia.size + cloudMedia.size)
+            unifiedMedia.forEach { byId[it.id] = it }
+            cloudMedia.forEach { byId.putIfAbsent(it.id, it) }
+            return byId.values
+                .filter { it.id in sessionAllowedIds || it.isFavourite }
+                .sortedByDescending { it.createdAt ?: it.modifiedAt ?: java.time.Instant.EPOCH }
+        }
     }
 }

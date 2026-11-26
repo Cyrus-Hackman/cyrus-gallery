@@ -151,6 +151,7 @@ fun CyrusGalleryApp() {
                         searchQuery = viewerSearchQuery,
                         albumId = viewerAlbumId,
                         albumName = viewerAlbumName,
+                        rootFolderOnly = viewerRootFolderOnly,
                         initialItems = viewerInitialItems,
                     ),
                     onCurrentItemChanged = { newId ->
