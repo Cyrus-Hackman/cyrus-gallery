@@ -48,6 +48,17 @@ class MediaDownloadWorker @AssistedInject constructor(
 
         val token = authManager.getAccessToken() ?: return@withContext Result.retry()
 
+        // Re-read the current pin state from Room — the enqueue-time input data may be stale if the
+        // user toggled pin after the work request was already queued but before it started running.
+        val currentEntity = cacheDao.find(driveId, itemId)
+        val effectiveIsPinned = when (currentEntity?.storageState) {
+            CloudStorageState.PINNED_OFFLINE -> true
+            else -> isPinned
+        }
+        // Preserve the existing localCachedPath so that a concurrent delta sync that reads from the DB
+        // between now and download completion does not see a spurious null path and demote the item.
+        val existingPath = currentEntity?.localCachedPath
+
         val downloadUrl = "https://graph.microsoft.com/v1.0/me/drive/items/$itemId/content"
         val request = Request.Builder()
             .url(downloadUrl)
@@ -58,7 +69,7 @@ class MediaDownloadWorker @AssistedInject constructor(
             cacheId = cacheId,
             status = CloudDownloadStatus.DOWNLOADING,
             progress = 0,
-            path = null,
+            path = existingPath,   // preserve existing path rather than nulling it out
             downloadedTime = null,
         )
 
@@ -69,7 +80,7 @@ class MediaDownloadWorker @AssistedInject constructor(
                         cacheId = cacheId,
                         status = CloudDownloadStatus.FAILED,
                         progress = 0,
-                        path = null,
+                        path = existingPath,  // preserve on failure too — file may still be valid
                         downloadedTime = null,
                     )
                     return@withContext if (response.code in 500..599) Result.retry() else Result.failure()
@@ -83,12 +94,12 @@ class MediaDownloadWorker @AssistedInject constructor(
                     itemId = itemId,
                     fileName = fileName,
                     type = type,
-                    isPinned = isPinned,
+                    isPinned = effectiveIsPinned,
                     sourceStream = body.byteStream(),
                     expectedSizeBytes = if (sizeBytes > 0) sizeBytes else null,
                 )
 
-                val targetState = if (isPinned) CloudStorageState.PINNED_OFFLINE else CloudStorageState.CACHED
+                val targetState = if (effectiveIsPinned) CloudStorageState.PINNED_OFFLINE else CloudStorageState.CACHED
                 val now = System.currentTimeMillis()
 
                 cacheDao.updateStorageState(
@@ -112,7 +123,7 @@ class MediaDownloadWorker @AssistedInject constructor(
                 cacheId = cacheId,
                 status = CloudDownloadStatus.FAILED,
                 progress = 0,
-                path = null,
+                path = existingPath,  // preserve any previously cached path — don't wipe on exception
                 downloadedTime = null,
             )
             Result.retry()
