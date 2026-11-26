@@ -50,6 +50,10 @@ class OneDriveRepository @Inject constructor(
         context.getSharedPreferences("onedrive_sync_prefs", Context.MODE_PRIVATE)
     }
 
+    private val foldersCacheFile by lazy {
+        File(context.filesDir, "onedrive_folders_cache.json")
+    }
+
     private val syncMutex = Mutex()
     @Volatile
     private var syncEpoch = 0L
@@ -59,14 +63,18 @@ class OneDriveRepository @Inject constructor(
     companion object {
         private const val PREF_DELTA_LINK = "delta_link"
         private const val PREF_CLASSIFIER_V2_MIGRATED = "classifier_v2_migrated"
+        private const val PREF_FOLDERS_V1_MIGRATED = "folders_v1_migrated"
     }
 
     init {
-        // One-time reset of pre-classifier delta cursor so previously skipped media types are discovered cleanly
-        if (!prefs.getBoolean(PREF_CLASSIFIER_V2_MIGRATED, false)) {
+        // One-time reset of legacy delta cursors so skipped media types and unpersisted folders are discovered cleanly
+        val needsClassifierMigration = !prefs.getBoolean(PREF_CLASSIFIER_V2_MIGRATED, false)
+        val needsFoldersMigration = !prefs.getBoolean(PREF_FOLDERS_V1_MIGRATED, false)
+        if (needsClassifierMigration || needsFoldersMigration) {
             prefs.edit()
                 .remove(PREF_DELTA_LINK)
                 .putBoolean(PREF_CLASSIFIER_V2_MIGRATED, true)
+                .putBoolean(PREF_FOLDERS_V1_MIGRATED, true)
                 .apply()
             currentDeltaLink = null
         } else {
@@ -74,9 +82,13 @@ class OneDriveRepository @Inject constructor(
             currentDeltaLink = prefs.getString(PREF_DELTA_LINK, null)
         }
 
-        // Hydrate from Room cache immediately on repository creation using structured appScope
+        // Hydrate items and folders from local caches immediately on startup before marking hydration complete
         appScope.launch(Dispatchers.IO) {
             try {
+                val cachedFolders = OneDriveFolderCacheCodec.readFromFile(foldersCacheFile)
+                if (cachedFolders.isNotEmpty() && _cloudFolders.value.isEmpty()) {
+                    _cloudFolders.value = cachedFolders
+                }
                 val cachedEntities = cacheDao.getRecent(5000)
                 if (cachedEntities.isNotEmpty() && _cloudItems.value.isEmpty()) {
                     _cloudItems.value = cachedEntities.map { entity ->
