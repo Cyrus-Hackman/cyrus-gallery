@@ -49,7 +49,9 @@ class OneDriveAuthManagerImpl @Inject constructor(
     override var cachedAccessToken: String? = null
         private set
 
+    @Volatile
     private var clientApp: ISingleAccountPublicClientApplication? = null
+    @Volatile
     private var currentAccount: IAccount? = null
 
     // Note: Do not include 'offline_access' in MSAL scopes array; MSAL manages refresh tokens internally.
@@ -66,11 +68,15 @@ class OneDriveAuthManagerImpl @Inject constructor(
                 object : IPublicClientApplication.ISingleAccountApplicationCreatedListener {
                     override fun onCreated(application: ISingleAccountPublicClientApplication) {
                         clientApp = application
-                        continuation.resume(Result.success(application))
+                        if (continuation.isActive) {
+                            continuation.resume(Result.success(application))
+                        }
                     }
 
                     override fun onError(exception: MsalException) {
-                        continuation.resume(Result.failure(exception))
+                        if (continuation.isActive) {
+                            continuation.resume(Result.failure(exception))
+                        }
                     }
                 },
             )
@@ -81,7 +87,9 @@ class OneDriveAuthManagerImpl @Inject constructor(
         suspendCancellableCoroutine { continuation ->
             app.getCurrentAccountAsync(object : ISingleAccountPublicClientApplication.CurrentAccountCallback {
                 override fun onAccountLoaded(activeAccount: IAccount?) {
-                    continuation.resume(Result.success(activeAccount))
+                    if (continuation.isActive) {
+                        continuation.resume(Result.success(activeAccount))
+                    }
                 }
 
                 override fun onAccountChanged(priorAccount: IAccount?, currentAccount: IAccount?) {
@@ -89,14 +97,45 @@ class OneDriveAuthManagerImpl @Inject constructor(
                         this@OneDriveAuthManagerImpl.currentAccount = null
                         cachedAccessToken = null
                         _authState.value = AuthState.SignedOut()
+                    } else {
+                        this@OneDriveAuthManagerImpl.currentAccount = currentAccount
+                        if (priorAccount?.id != currentAccount.id) {
+                            cachedAccessToken = null
+                        }
+                    }
+                    if (continuation.isActive) {
+                        continuation.resume(Result.success(currentAccount))
                     }
                 }
 
                 override fun onError(exception: MsalException) {
-                    continuation.resume(Result.failure(exception))
+                    if (continuation.isActive) {
+                        continuation.resume(Result.failure(exception))
+                    }
                 }
             })
         }
+
+    private suspend fun clearStaleMsalAccount(app: ISingleAccountPublicClientApplication) {
+        currentAccount = null
+        cachedAccessToken = null
+        suspendCancellableCoroutine<Unit> { continuation ->
+            app.signOut(object : ISingleAccountPublicClientApplication.SignOutCallback {
+                override fun onSignOut() {
+                    if (continuation.isActive) {
+                        continuation.resume(Unit)
+                    }
+                }
+
+                override fun onError(exception: MsalException) {
+                    // Best-effort cleanup so interactive signIn isn't blocked by a stale single account
+                    if (continuation.isActive) {
+                        continuation.resume(Unit)
+                    }
+                }
+            })
+        }
+    }
 
     private suspend fun acquireTokenSilent(
         app: ISingleAccountPublicClientApplication,
@@ -107,11 +146,15 @@ class OneDriveAuthManagerImpl @Inject constructor(
             account.authority,
             object : SilentAuthenticationCallback {
                 override fun onSuccess(result: IAuthenticationResult) {
-                    continuation.resume(Result.success(result))
+                    if (continuation.isActive) {
+                        continuation.resume(Result.success(result))
+                    }
                 }
 
                 override fun onError(exception: MsalException) {
-                    continuation.resume(Result.failure(exception))
+                    if (continuation.isActive) {
+                        continuation.resume(Result.failure(exception))
+                    }
                 }
             },
         )
@@ -144,10 +187,13 @@ class OneDriveAuthManagerImpl @Inject constructor(
             val exception = accountResult.exceptionOrNull()
             cachedAccessToken = null
             val acct = currentAccount
-            _authState.value = if (acct != null && exception !is MsalUiRequiredException) {
-                AuthState.Offline(acct.username, acct.id, exception?.message)
+            if (exception is MsalUiRequiredException) {
+                clearStaleMsalAccount(app)
+                _authState.value = AuthState.SignedOut(exception.message)
+            } else if (acct != null) {
+                _authState.value = AuthState.Offline(acct.username, acct.id, exception?.message)
             } else {
-                AuthState.SignedOut(exception?.message)
+                _authState.value = AuthState.SignedOut(exception?.message)
             }
             return Result.failure(exception ?: Exception("Failed to load Microsoft account"))
         }
@@ -174,11 +220,12 @@ class OneDriveAuthManagerImpl @Inject constructor(
         } else {
             val exception = tokenResult.exceptionOrNull()
             cachedAccessToken = null
-            // Preserve account offline state for transient/network failures; require login only when UI interaction is mandatory
-            _authState.value = if (exception is MsalUiRequiredException) {
-                AuthState.SignedOut(exception.message)
+            // Preserve account offline state for transient/network failures; clear stale MSAL session when UI interaction is mandatory
+            if (exception is MsalUiRequiredException) {
+                clearStaleMsalAccount(app)
+                _authState.value = AuthState.SignedOut(exception.message)
             } else {
-                AuthState.Offline(
+                _authState.value = AuthState.Offline(
                     displayName = activeAccount.username,
                     accountId = activeAccount.id,
                     message = exception?.message,
@@ -198,6 +245,13 @@ class OneDriveAuthManagerImpl @Inject constructor(
         }
 
         val app = appResult.getOrThrow()
+        // Clear any leftover single-account session in MSAL before starting interactive signIn
+        val existingAccount = currentAccount ?: loadCurrentAccount(app).getOrNull()
+        if (existingAccount != null) {
+            clearStaleMsalAccount(app)
+        }
+        _authState.value = AuthState.Authenticating
+
         return suspendCancellableCoroutine { continuation ->
             app.signIn(activity, "", scopes, object : AuthenticationCallback {
                 override fun onSuccess(result: IAuthenticationResult) {
@@ -207,19 +261,25 @@ class OneDriveAuthManagerImpl @Inject constructor(
                         displayName = result.account.username,
                         accountId = result.account.id,
                     )
-                    continuation.resume(Result.success(result.accessToken))
+                    if (continuation.isActive) {
+                        continuation.resume(Result.success(result.accessToken))
+                    }
                 }
 
                 override fun onError(exception: MsalException) {
                     cachedAccessToken = null
                     _authState.value = AuthState.SignedOut(exception.message)
-                    continuation.resume(Result.failure(exception))
+                    if (continuation.isActive) {
+                        continuation.resume(Result.failure(exception))
+                    }
                 }
 
                 override fun onCancel() {
                     cachedAccessToken = null
                     _authState.value = AuthState.SignedOut("Sign-in cancelled")
-                    continuation.resume(Result.failure(Exception("Cancelled")))
+                    if (continuation.isActive) {
+                        continuation.resume(Result.failure(Exception("Cancelled")))
+                    }
                 }
             })
         }
@@ -239,25 +299,38 @@ class OneDriveAuthManagerImpl @Inject constructor(
                     currentAccount = null
                     cachedAccessToken = null
                     _authState.value = AuthState.SignedOut()
-                    continuation.resume(Result.success(Unit))
+                    if (continuation.isActive) {
+                        continuation.resume(Result.success(Unit))
+                    }
                 }
 
                 override fun onError(exception: MsalException) {
-                    continuation.resume(Result.failure(exception))
+                    if (continuation.isActive) {
+                        continuation.resume(Result.failure(exception))
+                    }
                 }
             })
         }
     }
 
     override suspend fun getAccessToken(): String? {
+        if (_authState.value is AuthState.Authenticating) return null
         val app = clientApp ?: ensureClient().getOrNull() ?: return null
         val account = currentAccount ?: loadCurrentAccount(app).getOrNull()?.also {
             currentAccount = it
         } ?: return null
 
-        val authResult = acquireTokenSilent(app, account).getOrNull() ?: return null
-        currentAccount = authResult.account
-        cachedAccessToken = authResult.accessToken
-        return authResult.accessToken
+        val tokenResult = acquireTokenSilent(app, account)
+        if (tokenResult.isSuccess) {
+            val authResult = tokenResult.getOrThrow()
+            currentAccount = authResult.account
+            cachedAccessToken = authResult.accessToken
+            return authResult.accessToken
+        }
+        if (tokenResult.exceptionOrNull() is MsalUiRequiredException && _authState.value !is AuthState.Authenticating) {
+            clearStaleMsalAccount(app)
+            _authState.value = AuthState.SignedOut(tokenResult.exceptionOrNull()?.message)
+        }
+        return null
     }
 }
