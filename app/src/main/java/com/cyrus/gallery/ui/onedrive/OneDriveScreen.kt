@@ -139,13 +139,16 @@ fun OneDriveScreen(
 
     val handleMediaClick: (MediaItem, List<MediaItem>) -> Unit = { clicked, all ->
         if (onOpenViewer != null) {
-            val activeAlbumFilter = if (!isSearchActive && browseMode == OneDriveBrowseMode.FOLDERS) currentFolderId else null
+            val isFolderMode = !isSearchActive && browseMode == OneDriveBrowseMode.FOLDERS
+            val isFolderRootBrowse = isFolderMode && currentFolderId == null
+            val activeAlbumFilter = if (isFolderMode) currentFolderId else null
             onOpenViewer(
                 ViewerSessionConfig(
                     sourceRoute = ViewerScopeRoutes.ONEDRIVE,
                     selectedItemId = clicked.id,
                     searchQuery = if (isSearchActive) searchQuery else "",
                     albumId = activeAlbumFilter,
+                    rootFolderOnly = isFolderRootBrowse,
                     initialItems = all,
                 ),
             )

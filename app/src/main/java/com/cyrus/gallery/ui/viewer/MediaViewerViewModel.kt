@@ -10,6 +10,7 @@ import com.cyrus.gallery.data.remote.graph.GraphOkHttpDataSourceFactory
 import com.cyrus.gallery.data.repository.MediaDeletePermissionRequiredException
 import com.cyrus.gallery.data.sync.OneDriveSyncManager
 import com.cyrus.gallery.di.GraphMediaClient
+import com.cyrus.gallery.domain.model.Album
 import com.cyrus.gallery.domain.model.CloudStorageState
 import com.cyrus.gallery.domain.model.MediaItem
 import com.cyrus.gallery.domain.model.MediaSource

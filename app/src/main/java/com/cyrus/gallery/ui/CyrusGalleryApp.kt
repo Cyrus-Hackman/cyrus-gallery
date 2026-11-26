@@ -50,6 +50,7 @@ fun CyrusGalleryApp() {
     var viewerSearchQuery by rememberSaveable { mutableStateOf("") }
     var viewerAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
     var viewerAlbumName by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewerRootFolderOnly by rememberSaveable { mutableStateOf(false) }
     var viewerSessionSeq by rememberSaveable { mutableIntStateOf(0) }
     var viewerInitialItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
 

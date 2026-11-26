@@ -165,4 +165,51 @@ class UnifiedGalleryRepository @Inject constructor(
         )
         result.map { it.id }
     }
+
+    companion object {
+        private val newestFirstComparator = Comparator<MediaItem> { a, b ->
+            val bTime = b.createdAt ?: b.modifiedAt ?: java.time.Instant.EPOCH
+            val aTime = a.createdAt ?: a.modifiedAt ?: java.time.Instant.EPOCH
+            bTime.compareTo(aTime)
+        }
+
+        internal fun mergeUnifiedMedia(
+            localItems: List<MediaItem>,
+            enrichedCloudItems: List<MediaItem>,
+            favoriteIds: Set<String>,
+        ): List<MediaItem> {
+            // Deduplicate local vs cloud copies of the exact same media
+            val localNameSet = localItems.map { it.displayName.lowercase() }.toSet()
+
+            val enrichedLocalItems = localItems.map { localItem ->
+                localItem.copy(isFavourite = localItem.id in favoriteIds)
+            }
+
+            // Keep all local items, plus cloud-only items that do not duplicate a local original
+            val distinctCloudItems = enrichedCloudItems.filter { cloudItem ->
+                cloudItem.displayName.lowercase() !in localNameSet
+            }
+
+            return (enrichedLocalItems + distinctCloudItems).sortedWith(newestFirstComparator)
+        }
+
+        internal fun buildFavoriteMedia(
+            localItems: List<MediaItem>,
+            enrichedCloudItems: List<MediaItem>,
+            favoriteIds: Set<String>,
+        ): List<MediaItem> {
+            if (favoriteIds.isEmpty()) return emptyList()
+            val favLocal = localItems
+                .filter { it.id in favoriteIds }
+                .map { it.copy(isFavourite = true) }
+            // Keep all favorited cloud items even when a local item has the same displayName
+            val favCloud = enrichedCloudItems
+                .filter { it.id in favoriteIds }
+                .map { it.copy(isFavourite = true) }
+
+            return (favLocal + favCloud)
+                .distinctBy { it.id }
+                .sortedWith(newestFirstComparator)
+        }
+    }
 }

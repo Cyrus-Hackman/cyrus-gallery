@@ -104,7 +104,13 @@ fun MediaViewerScreen(
     onBack: () -> Unit,
     viewModel: MediaViewerViewModel = hiltViewModel(),
 ) {
-    val liveItemsFlow = remember(config.sourceRoute, config.searchQuery, config.albumId, config.albumName) {
+    val liveItemsFlow = remember(
+        config.sourceRoute,
+        config.searchQuery,
+        config.albumId,
+        config.albumName,
+        config.rootFolderOnly,
+    ) {
         viewModel.observeViewerItems(config)
     }
     val liveItems by liveItemsFlow.collectAsStateWithLifecycle(initialValue = config.initialItems)
